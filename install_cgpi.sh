@@ -4,20 +4,13 @@
 
 # ASCII-Logo anzeigen
 echo """
-                                             /$$                   /$$              
-                                            | $$                  | $$              
-  /$$$$$$   /$$$$$$   /$$$$$$  /$$  /$$  /$$| $$$$$$$   /$$$$$$  /$$$$$$    /$$$$$$ 
- /$$__  $$ /$$__  $$ /$$__  $$| $$ | $$ | $$| $$__  $$ /$$__  $$|_  $$_/   /$$__  $$
-| $$  \ $$| $$  \__/| $$  \ $$| $$ | $$ | $$| $$  \ $$| $$  \ $$  | $$    | $$  \ $$
-| $$  | $$| $$      | $$  | $$| $$ | $$ | $$| $$  | $$| $$  | $$  | $$ /$$| $$  | $$
-|  $$$$$$$| $$      |  $$$$$$/|  $$$$$/$$$$/| $$$$$$$/|  $$$$$$/  |  $$$$/|  $$$$$$/
- \____  $$|__/       \______/  \_____/\___/ |_______/  \______/    \___/   \______/ 
- /$$  \ $$                                                                          
-|  $$$$$$/                                                                          
- \______/                                                                           
+  ____                     _     _       
+ / ___|  __ _  _ __  ___  | |_  | |  ___ 
+ \___ \ / _` || '__|/ _ \ | __| | | / _ \
+  ___) | (_| || |  |  __/ | |_  | ||  __/
+ |____/ \__,_||_|   \___|  \__| |_| \___|
 
-
- 🪴🤖 G R O W B O T O 1.0 -  AI automatisiertes Grow-System 🤖🪴
+ G R O W B O T O  -  Automatisiertes Grow-System 🚀
 """
 
 # Logging einrichten
@@ -39,7 +32,7 @@ sudo apt update && sudo apt upgrade -y
 
 # Wichtige Pakete installieren
 echo "--- Installiere grundlegende Pakete ---"
-sudo apt install -y git python3 python3-pip python3-venv i2c-tools lm-sensors screen tmux htop curl nginx mosquitto mosquitto-clients influxdb grafana
+sudo apt install -y git python3 python3-pip python3-venv i2c-tools lm-sensors screen tmux htop curl nginx mosquitto mosquitto-clients influxdb grafana fswebcam uvcdynctrl motion mjpg-streamer
 
 # I2C, SPI und 1-Wire aktivieren
 echo "--- Aktiviere I2C, SPI und 1-Wire ---"
@@ -98,6 +91,26 @@ EOF
 sudo systemctl enable growboto_api.service
 sudo systemctl start growboto_api.service
 
+# Logitech Webcam konfigurieren
+echo "--- Konfiguriere Logitech Webcam ---"
+sudo uvcdynctrl -s "Focus, Auto" 0  # Auto-Fokus deaktivieren
+sudo uvcdynctrl -s "Exposure, Auto" 1  # Manuelle Belichtung aktivieren
+sudo uvcdynctrl -s "Brightness" 128  # Standard-Helligkeit setzen
+
+# Webcam Testbild aufnehmen
+echo "--- Mache ein Testbild mit fswebcam ---"
+fswebcam -r 1280x720 --no-banner /home/pi/webcam_test.jpg
+
 echo "--- Installation abgeschlossen! Neustart in 5 Sekunden... ---"
 sleep 5
-sudo reboot
+echo "--- Installation abgeschlossen! ---"
+echo "Ein Neustart wird empfohlen. Möchten Sie jetzt neustarten? (j/n)"
+read answer
+if [ "$answer" = "j" ]; then
+    sudo reboot
+else
+    echo "Bitte denken Sie daran, das System später neu zu starten."
+fi
+
+# Nach der Installation daran denken, das virtuelle Environment zu deaktivieren!
+echo "--- Denke daran, das virtuelle Environment zu deaktivieren: deactivate"
