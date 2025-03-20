@@ -3,7 +3,7 @@
 # Growboto Setup Script - Installiert alle benötigten Pakete und konfiguriert das System
 
 # ASCII-Logo anzeigen
-echo """
+cat << 'EOF'
   ____                     _     _       
  / ___|  __ _  _ __  ___  | |_  | |  ___ 
  \___ \ / _` || '__|/ _ \ | __| | | / _ \
@@ -11,7 +11,7 @@ echo """
  |____/ \__,_||_|   \___|  \__| |_| \___|
 
  G R O W B O T O  -  Automatisiertes Grow-System 🚀
-"""
+EOF
 
 # Logging einrichten
 LOG_FILE="/var/log/growboto_setup.log"
@@ -101,8 +101,6 @@ sudo uvcdynctrl -s "Brightness" 128  # Standard-Helligkeit setzen
 echo "--- Mache ein Testbild mit fswebcam ---"
 fswebcam -r 1280x720 --no-banner /home/pi/webcam_test.jpg
 
-echo "--- Installation abgeschlossen! Neustart in 5 Sekunden... ---"
-sleep 5
 echo "--- Installation abgeschlossen! ---"
 echo "Ein Neustart wird empfohlen. Möchten Sie jetzt neustarten? (j/n)"
 read answer
