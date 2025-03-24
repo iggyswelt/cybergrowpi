@@ -4,7 +4,6 @@
 
 # ASCII-Logo anzeigen
 cat << 'EOF'
-
                                              /$$                                           /$$
                                             | $$                                          |__/
   /$$$$$$   /$$$$$$   /$$$$$$  /$$  /$$  /$$| $$$$$$$   /$$$$$$  /$$   /$$        /$$$$$$  /$$
@@ -16,7 +15,6 @@ cat << 'EOF'
  /$$  \ $$                                                                      | $$          
 |  $$$$$$/                                                                      | $$          
  \______/                                                                       |__/          
-
 
  G R O W B O T O  -  Automatisiertes Grow-System 🚀
 EOF
