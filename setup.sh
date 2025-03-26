@@ -1,7 +1,5 @@
 #!/bin/bash
-
 # Growboto Setup Script - Installiert alle benötigten Pakete und konfiguriert das System
-
 # ASCII-Logo anzeigen
 cat << 'EOF'
                                              /$$                                           /$$
@@ -18,89 +16,159 @@ cat << 'EOF'
 
  G R O W B O T O  -  Automatisiertes Grow-System 🚀
 EOF
+# Growbox Pi Setup Script - Idiotensicher & Getestet
+# Version 3.0 - 2025-03-27
+# Autor: Iggy & deepseek
+# youtube: https://www.youtube.com/@iggyswelt
+# GitHub:  https://github.com/iggyswelt/cybergrowpi
 
-# Update und Upgrade
-echo "Aktualisiere und upgrade das System..."
-sudo apt-get update -y
-sudo apt-get upgrade -y
+# Farben für nicen output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
 
-# Installiere notwendige Pakete
-echo "Installiere notwendige Pakete..."
-sudo apt-get install -y \
-    mjpg-streamer \
-    v4l-utils \
-    vlc \
-    cheese \
-    libv4l-dev \
-    ffmpeg \
-    git \
-    build-essential
+# Log-Datei
+LOG_FILE="/var/log/growbox_setup.log"
+sudo touch "$LOG_FILE"
+sudo chmod 644 "$LOG_FILE"
+exec > >(tee -a "$LOG_FILE") 2>&1
 
-# Überprüfe, ob mjpg-streamer und v4l-utils korrekt installiert sind
-echo "Überprüfe mjpg-streamer und v4l-utils..."
-if ! command -v mjpg-streamer &> /dev/null
-then
-    echo "Fehler: mjpg-streamer wurde nicht gefunden!"
+# Funktionen
+error_exit() {
+    echo -e "${RED}[FEHLER] $1${NC}" >&2
+    echo -e "${YELLOW}Details im Log: $LOG_FILE${NC}"
     exit 1
-fi
+}
 
-if ! command -v v4l2-ctl &> /dev/null
-then
-    echo "Fehler: v4l-utils wurde nicht gefunden!"
-    exit 1
-fi
+status_check() {
+    if [ $? -ne 0 ]; then
+        error_exit "$1"
+    else
+        echo -e "${GREEN}[OK]${NC} $2"
+    fi
+}
 
-# Kamera-Tests und Vorbereitung
-echo "Starte Kamera-Test..."
-# Kamera auf /dev/video0 prüfen
-if [ -e /dev/video0 ]; then
-    echo "Kamera auf /dev/video0 gefunden."
+print_header() {
+    echo -e "\n${BLUE}=== $1 ===${NC}"
+}
+
+# Header
+echo -e "\n${GREEN}=== Growbox Pi Setup Script ==="
+echo "=== Version 3.0 ==="
+echo "=== Start: $(date) ==="
+echo "=== Log: $LOG_FILE ===${NC}"
+
+# 1. Systemupdate
+print_header "1/6 | Systemaktualisierung"
+sudo apt-get update -y || error_exit "Update fehlgeschlagen!"
+sudo apt-get upgrade -y || error_exit "Upgrade fehlgeschlagen!"
+sudo apt-get autoremove -y
+
+# 2. Pakete installieren
+print_header "2/6 | Installiere Pakete"
+REQUIRED_PACKAGES=(
+    git python3 python3-pip python3-venv
+    i2c-tools lm-sensors v4l-utils
+    nginx mosquitto mosquitto-clients
+    influxdb grafana fswebcam
+    libjpeg62-turbo-dev libv4l-dev cmake
+    ffmpeg motion
+)
+
+# Grafana Repo hinzufügen
+curl -fsSL https://packages.grafana.com/gpg.key | sudo gpg --dearmor -o /usr/share/keyrings/grafana.gpg
+echo "deb [signed-by=/usr/share/keyrings/grafana.gpg] https://packages.grafana.com/oss/deb stable main" | sudo tee /etc/apt/sources.list.d/grafana.list > /dev/null
+
+sudo apt-get update || error_exit "Repository-Update fehlgeschlagen"
+sudo apt-get install -y "${REQUIRED_PACKAGES[@]}" || error_exit "Paketinstallation fehlgeschlagen"
+
+# 3. Hardware aktivieren
+print_header "3/6 | Aktiviere Schnittstellen"
+sudo raspi-config nonint do_camera 0 || error_exit "Kamera konnte nicht aktiviert werden"
+sudo raspi-config nonint do_i2c 0 || error_exit "I2C konnte nicht aktiviert werden"
+sudo raspi-config nonint do_spi 0 || error_exit "SPI konnte nicht aktiviert werden"
+sudo raspi-config nonint do_onewire 0 || error_exit "1-Wire konnte nicht aktiviert werden"
+
+# 4. mjpg-streamer installieren
+print_header "4/6 | Installiere mjpg-streamer"
+if [ ! -f "/usr/local/bin/mjpg_streamer" ]; then
+    echo "Installiere mjpg-streamer von Source..."
+    MJPG_DIR="/opt/mjpg-streamer"
+    sudo mkdir -p "$MJPG_DIR"
+    sudo chown "$USER":"$USER" "$MJPG_DIR"
+    
+    cd "$MJPG_DIR" || error_exit "Kann nicht nach $MJPG_DIR wechseln"
+    git clone https://github.com/jacksonliam/mjpg-streamer.git || error_exit "Klonen fehlgeschlagen"
+    
+    cd mjpg-streamer/mjpg-streamer-experimental || error_exit "Verzeichnis nicht gefunden"
+    make clean && make || error_exit "Kompilierung fehlgeschlagen"
+    sudo make install || error_exit "Installation fehlgeschlagen"
+    
+    # Symlink für einfachen Zugriff
+    sudo ln -sf "$MJPG_DIR/mjpg-streamer-experimental/mjpg_streamer" /usr/local/bin/
+    
+    # Web-Verzeichnis erstellen
+    sudo mkdir -p /usr/local/www
+    sudo chown -R "$USER":"$USER" /usr/local/www
 else
-    echo "Fehler: Keine Kamera auf /dev/video0 gefunden!"
-    exit 1
+    echo "mjpg-streamer ist bereits installiert."
 fi
 
-# Setze Kamera-Format und -Auflösung
-echo "Setze Kamera auf 640x480 und MJPEG-Format..."
-v4l2-ctl --device=/dev/video0 --set-fmt-video=width=640,height=480,pixelformat=MJPG
+# 5. Kamera konfigurieren
+print_header "5/6 | Kamera-Setup"
+sudo usermod -aG video "$USER" || echo -e "${YELLOW}Warnung: Nutzer bereits in Video-Gruppe${NC}"
+sudo chmod 666 /dev/video0 || echo -e "${YELLOW}Warnung: Berechtigungen für /dev/video0 konnten nicht gesetzt werden${NC}"
 
-# Teste Video-Stream
-echo "Teste Video-Stream..."
-mjpg_streamer -o "output_http.so -w /usr/local/www" -i "input_uvc.so -d /dev/video0 -r 640x480 -f 30"
+# Unterstützte Formate anzeigen
+echo -e "\n${YELLOW}Verfügbare Kameraformate:${NC}"
+v4l2-ctl --device=/dev/video0 --list-formats-ext || error_exit "Kamera nicht erreichbar"
 
-# Starte mjpg-streamer im Hintergrund
-echo "Starte mjpg-streamer im Hintergrund..."
-nohup mjpg_streamer -o "output_http.so -w /usr/local/www" -i "input_uvc.so -d /dev/video0 -r 640x480 -f 30" &
+# 6. Systemd-Service erstellen
+print_header "6/6 | Autostart einrichten"
+SERVICE_FILE="/etc/systemd/system/growcam.service"
 
-# Prüfe, ob der Stream erfolgreich läuft
-if pgrep mjpg_streamer > /dev/null
-then
-    echo "mjpg-streamer läuft erfolgreich im Hintergrund."
+# Optimierte Konfiguration basierend auf unseren Tests
+sudo tee "$SERVICE_FILE" > /dev/null <<EOF
+[Unit]
+Description=Growbox Camera Stream
+After=network.target
+
+[Service]
+User=$USER
+ExecStart=/usr/local/bin/mjpg_streamer \\
+  -i "input_uvc.so -d /dev/video0 -r 640x480 -f 10 -q 80 -n" \\
+  -o "output_http.so -w /usr/local/www -p 8080"
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+# Service aktivieren
+sudo systemctl daemon-reload || error_exit "Daemon-Reload fehlgeschlagen"
+sudo systemctl enable growcam.service || error_exit "Service-Aktivierung fehlgeschlagen"
+sudo systemctl start growcam.service || error_exit "Service-Start fehlgeschlagen"
+
+# Finale Überprüfung
+sleep 2
+echo -e "\n${YELLOW}Service-Status:${NC}"
+systemctl status growcam.service --no-pager || error_exit "Service läuft nicht!"
+
+# Zusammenfassung
+echo -e "\n${GREEN}=== Installation abgeschlossen! ===${NC}"
+echo -e "Kamera-Stream: ${BLUE}http://$(hostname -I | awk '{print $1}'):8080/?action=stream${NC}"
+echo -e "Snapshot:      ${BLUE}http://$(hostname -I | awk '{print $1}'):8080/?action=snapshot${NC}"
+echo -e "Grafana:       ${BLUE}http://$(hostname -I | awk '{print $1}'):3000${NC}"
+echo -e "\n${YELLOW}Tipp: Nutze 'journalctl -u growcam.service -f' für Debugging${NC}"
+
+# Neustart empfehlen
+echo -e "\n${YELLOW}Ein Neustart wird empfohlen. Jetzt neustarten? (j/n)${NC}"
+read -r answer
+if [[ "$answer" =~ [jJ] ]]; then
+    sudo reboot
 else
-    echo "Fehler: mjpg-streamer konnte nicht gestartet werden!"
-    exit 1
+    echo -e "${YELLOW}Vergiss nicht, später neu zu starten!${NC}"
 fi
-
-# Kamera-Zugriff überprüfen
-echo "Überprüfe, ob andere Programme die Kamera blockieren..."
-if fuser -v /dev/video0; then
-    echo "Die Kamera wird von einem anderen Prozess verwendet. Bitte stoppen Sie diesen Prozess."
-    exit 1
-else
-    echo "Kamera ist frei für Verwendung."
-fi
-
-# Optional: VLC ohne GUI starten (cvlc) für Tests
-echo "Starte VLC im Kopfmodus für den Video-Stream..."
-cvlc v4l2:///dev/video0 :v4l2-width=640 :v4l2-height=480 :v4l2-fps=30 :v4l2-chroma=MJPG
-
-# Optional: Kamera in Cheese testen
-echo "Möchtest du die Kamera in Cheese testen? (y/n)"
-read cheese_test
-if [ "$cheese_test" == "y" ]; then
-    cheese
-else
-    echo "Cheese nicht gestartet."
-fi
-
-echo "Setup abgeschlossen. Kamera und Stream sollten jetzt korrekt laufen."
