@@ -1,6 +1,6 @@
 # CyberGrowPi - DIY Open-Source Growbox Projekt
 
-Willkommen bei **CyberGrowPi**, einem DIY Open-Source Bastelprojekt des YouTube-Kanals **@iggyswelt**! Dieses Projekt zeigt, wie du eine kostengünstige, automatisierte Growbox mit einem Raspberry Pi, verschiedenen Sensoren und einer WLAN-Steckdosenleiste baust. Ziel ist es, die Umweltbedingungen für Pflanzen wie Hanf und Tomaten zu optimieren, ohne teure kommerzielle Systeme wie AC Infinity oder Spider Farmer zu kaufen. Alle Details, Schaltpläne und der Code werden hier auf GitHub open-source bereitgestellt, damit du dein eigenes System nachbauen kannst.
+Willkommen bei **CyberGrowPi**, einem DIY Open-Source Bastelprojekt des YouTube-Kanals **@iggyswelt** https://www.youtube.com/@iggyswelt ! Dieses Projekt zeigt, wie du eine kostengünstige, automatisierte Growbox mit einem Raspberry Pi, verschiedenen Sensoren und einer WLAN-Steckdosenleiste baust. Ziel ist es, die Umweltbedingungen für Pflanzen wie Hanf und Tomaten zu optimieren, ohne teure kommerzielle Systeme wie AC Infinity oder Spider Farmer zu kaufen. Alle Details, Schaltpläne und der Code werden hier auf GitHub open-source bereitgestellt, damit du dein eigenes System nachbauen kannst.
 
 ## Projektübersicht
 
