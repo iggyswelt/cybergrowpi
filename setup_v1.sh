@@ -1,9 +1,7 @@
 #!/bin/bash
 
-# Growbox Pi Setup Script - 100% Lokal (Version 5.0)
-# Autor: Iggy mit ChatGPT
-# GitHub: https://github.com/yourusername/growbox-pi-local
-
+# Growbox Pi Setup Script - Final Optimized Version 1.0
+# Autor: Iggy & deepseek
 # Farben
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -20,196 +18,154 @@ exec > >(tee -a "$LOG_FILE") 2>&1
 # Funktionen
 error_exit() {
     echo -e "${RED}[FEHLER] $1${NC}" >&2
-    echo -e "${YELLOW}Log: $LOG_FILE${NC}"
+    echo -e "${YELLOW}Details im Log: $LOG_FILE${NC}"
     exit 1
-}
-
-status_check() {
-    if [ $? -ne 0 ]; then
-        error_exit "$1"
-    else
-        echo -e "${GREEN}[OK]${NC} $2"
-    fi
 }
 
 print_header() {
     echo -e "\n${BLUE}=== $1 ===${NC}"
 }
 
+check_command() {
+    if ! command -v $1 &> /dev/null; then
+        error_exit "$1 ist nicht installiert"
+    fi
+}
+
 # System-Update
-print_header "1. Systemupdate"
-sudo apt-get update -y || error_exit "Update fehlgeschlagen"
-sudo apt-get upgrade -y || error_exit "Upgrade fehlgeschlagen"
-sudo apt-get autoremove -y
+system_update() {
+    print_header "Systemaktualisierung"
+    sudo apt-get update -y && sudo apt-get upgrade -y
+    sudo apt-get autoremove -y
+}
 
-# Basispakete
-print_header "2. Installiere Basispakete"
-BASE_PACKAGES=(
-    git python3 python3-pip python3-venv
-    i2c-tools lm-sensors v4l-utils
-    nginx mosquitto mosquitto-clients
-    influxdb libjpeg62-turbo-dev libv4l-dev
-    ffmpeg motion mariadb-server
-)
-
-sudo apt-get install -y "${BASE_PACKAGES[@]}" || error_exit "Paketinstallation fehlgeschlagen"
-
-# Grafana (lokal)
-curl -fsSL https://packages.grafana.com/gpg.key | sudo gpg --dearmor -o /usr/share/keyrings/grafana.gpg
-echo "deb [signed-by=/usr/share/keyrings/grafana.gpg] https://packages.grafana.com/oss/deb stable main" | sudo tee /etc/apt/sources.list.d/grafana.list > /dev/null
-sudo apt-get update && sudo apt-get install -y grafana || error_exit "Grafana-Installation fehlgeschlagen"
-
-# Hardware aktivieren
-print_header "3. Aktiviere Schnittstellen"
-sudo raspi-config nonint do_camera 0 || error_exit "Kamera konnte nicht aktiviert werden"
-sudo raspi-config nonint do_i2c 0 || error_exit "I2C konnte nicht aktiviert werden"
-sudo raspi-config nonint do_spi 0 || error_exit "SPI konnte nicht aktiviert werden"
-sudo raspi-config nonint do_onewire 0 || error_exit "1-Wire konnte nicht aktiviert werden"
-
-# mjpg-streamer (lokal)
-print_header "4. Installiere mjpg-streamer"
-if [ ! -f "/usr/local/bin/mjpg_streamer" ]; then
-    MJPG_DIR="/opt/mjpg-streamer"
-    sudo mkdir -p "$MJPG_DIR"
-    sudo chown "$USER":"$USER" "$MJPG_DIR"
+# Paketinstallation
+install_packages() {
+    print_header "Paketinstallation"
+    local packages=(
+        git python3 python3-pip python3-venv
+        i2c-tools lm-sensors v4l-utils
+        nginx mosquitto mosquitto-clients
+        influxdb grafana fswebcam
+        libjpeg62-turbo-dev libv4l-dev
+        ffmpeg motion mariadb-server npm
+    )
     
-    git clone https://github.com/jacksonliam/mjpg-streamer.git "$MJPG_DIR" || error_exit "Klonen fehlgeschlagen"
-    cd "$MJPG_DIR/mjpg-streamer-experimental" || error_exit "Verzeichnis nicht gefunden"
-    make clean && make || error_exit "Kompilierung fehlgeschlagen"
-    sudo make install || error_exit "Installation fehlgeschlagen"
-    sudo ln -sf "$MJPG_DIR/mjpg-streamer-experimental/mjpg_streamer" /usr/local/bin/
+    sudo apt-get install -y "${packages[@]}" || error_exit "Paketinstallation fehlgeschlagen"
+}
+
+# mjpg-streamer Installation
+install_mjpg_streamer() {
+    print_header "mjpg-streamer Installation"
+    local mjpg_dir="/opt/mjpg-streamer"
     
-    sudo mkdir -p /usr/local/www
-    sudo chown -R "$USER":"$USER" /usr/local/www
-fi
+    if [ ! -f "/usr/local/bin/mjpg_streamer" ]; then
+        sudo mkdir -p "$mjpg_dir"
+        sudo chown $USER:$USER "$mjpg_dir"
+        
+        git clone https://github.com/jacksonliam/mjpg-streamer.git "$mjpg_dir" || error_exit "Klonen fehlgeschlagen"
+        cd "$mjpg_dir/mjpg-streamer-experimental" || error_exit "Verzeichniswechsel fehlgeschlagen"
+        
+        make && sudo make install || error_exit "Kompilierung fehlgeschlagen"
+        sudo ln -sf "$mjpg_dir/mjpg-streamer-experimental/mjpg_streamer" /usr/local/bin/
+        
+        sudo mkdir -p /usr/local/www
+        sudo chown -R $USER:$USER /usr/local/www
+    fi
+}
 
-# Kamera-Service
-print_header "5. Kamera-Service"
-sudo tee /etc/systemd/system/growcam.service > /dev/null <<EOF
-[Unit]
-Description=Growbox Camera Stream
-After=network.target
-
-[Service]
-User=$USER
-ExecStart=/usr/local/bin/mjpg_streamer \\
-  -i "input_uvc.so -d /dev/video0 -r 640x480 -f 10 -q 80 -n" \\
-  -o "output_http.so -w /usr/local/www -p 8080"
-Restart=always
-RestartSec=5
-
-[Install]
-WantedBy=multi-user.target
+# Home Assistant mit Fixes
+install_homeassistant() {
+    print_header "Home Assistant Installation"
+    local ha_dir="/srv/homeassistant"
+    
+    if [ ! -d "$ha_dir" ]; then
+        sudo useradd -rm homeassistant -G dialout,gpio,i2c,video || error_exit "Nutzeranlage fehlgeschlagen"
+        sudo mkdir -p "$ha_dir" || error_exit "Verzeichnis erstellen fehlgeschlagen"
+        sudo chown homeassistant:homeassistant "$ha_dir"
+        
+        sudo -u homeassistant python3 -m venv "$ha_dir" || error_exit "Venv erstellen fehlgeschlagen"
+        
+        # Kritische Pakete mit Version-Pinning
+        sudo -u homeassistant -H -s <<EOF
+source "$ha_dir/bin/activate"
+pip install --upgrade pip wheel
+pip install "josepy==1.13.0" "acme==2.8.0" "certbot==2.8.0"
+pip install homeassistant
 EOF
-
-sudo systemctl daemon-reload
-sudo systemctl enable growcam.service
-sudo systemctl start growcam.service
-
-# MariaDB für Home Assistant
-print_header "6. MariaDB einrichten"
-sudo mysql -e "CREATE DATABASE homeassistant CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;" || error_exit "Datenbank konnte nicht erstellt werden"
-sudo mysql -e "CREATE USER 'homeassistant'@'localhost' IDENTIFIED BY 'dein_sicheres_passwort';" || error_exit "Nutzer konnte nicht erstellt werden"
-sudo mysql -e "GRANT ALL PRIVILEGES ON homeassistant.* TO 'homeassistant'@'localhost';" || error_exit "Berechtigungen konnten nicht gesetzt werden"
-sudo mysql -e "FLUSH PRIVILEGES;"
-
-# Home Assistant (lokal)
-print_header "7. Home Assistant Installation"
-sudo useradd -rm homeassistant -G dialout,gpio,i2c,video || error_exit "Nutzer anlegen fehlgeschlagen"
-sudo mkdir /srv/homeassistant || error_exit "Verzeichnis erstellen fehlgeschlagen"
-sudo chown homeassistant:homeassistant /srv/homeassistant
-
-sudo -u homeassistant -H -s <<EOF
-cd /srv/homeassistant
-python3 -m venv .
-source bin/activate
-pip3 install wheel
-pip3 install homeassistant
-exit
-EOF
-
-# Home Assistant Service mit MariaDB
-sudo tee /etc/systemd/system/home-assistant@homeassistant.service > /dev/null <<EOF
+        
+        # Systemd Service
+        sudo tee /etc/systemd/system/home-assistant@homeassistant.service > /dev/null <<EOF
 [Unit]
 Description=Home Assistant
-After=network-online.target mariadb.service
+After=network.target mariadb.service
 
 [Service]
 Type=simple
 User=homeassistant
-WorkingDirectory=/srv/homeassistant
-ExecStart=/srv/homeassistant/bin/hass -c "/home/homeassistant/.homeassistant"
-RestartForceExitStatus=100
+WorkingDirectory=$ha_dir
+ExecStart=$ha_dir/bin/hass -c "/home/homeassistant/.homeassistant"
+Restart=always
 
 [Install]
 WantedBy=multi-user.target
 EOF
 
-sudo systemctl daemon-reload
-sudo systemctl enable home-assistant@homeassistant
-sudo systemctl start home-assistant@homeassistant
+        sudo systemctl daemon-reload
+        sudo systemctl enable home-assistant@homeassistant
+    fi
+}
 
-# LocalTuya Vorbereitung
-print_header "8. LocalTuya Setup"
-sudo -u homeassistant -H -s <<EOF
-cd /srv/homeassistant
-source bin/activate
-pip3 install localtuya
-exit
-EOF
+# Datenbank Setup
+setup_mariadb() {
+    print_header "MariaDB Konfiguration"
+    sudo mysql -e "CREATE DATABASE IF NOT EXISTS homeassistant CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
+    sudo mysql -e "CREATE USER IF NOT EXISTS 'homeassistant'@'localhost' IDENTIFIED BY 'growbox123';"
+    sudo mysql -e "GRANT ALL PRIVILEGES ON homeassistant.* TO 'homeassistant'@'localhost';"
+    sudo mysql -e "FLUSH PRIVILEGES;"
+}
 
-echo -e "${YELLOW}\n[MANUELLER SCHRITT] LocalTuya Konfiguration:"
-echo "1. Tuya-Gerät im lokalen Netzwerk ermitteln:"
-echo "   sudo apt-get install -y npm && sudo npm install -g tuya-cli"
-echo "   tuya-cli list-app"
-echo "2. configuration.yaml anpassen (Beispiel folgt im Log)"
-echo -e "${NC}"
+# Finale Checks
+final_checks() {
+    print_header "Abschlussprüfung"
+    
+    echo -e "\n${GREEN}=== Installierte Dienste ==="
+    services=(
+        growcam.service 
+        home-assistant@homeassistant 
+        grafana-server 
+        influxdb 
+        mosquitto
+    )
+    
+    for service in "${services[@]}"; do
+        if systemctl is-active --quiet "$service"; then
+            echo -e "${GREEN}✔ $service${NC}"
+        else
+            echo -e "${RED}✘ $service${NC}"
+        fi
+    done
+    
+    echo -e "\n${GREEN}=== Zugangslinks ==="
+    local ip=$(hostname -I | awk '{print $1}')
+    echo -e "Home Assistant: ${BLUE}http://$ip:8123${NC}"
+    echo -e "Grafana:        ${BLUE}http://$ip:3000${NC}"
+    echo -e "Kamera-Stream:  ${BLUE}http://$ip:8080/?action=stream${NC}"
+}
 
-# MQTT Broker (lokal)
-print_header "9. MQTT Broker"
-sudo mosquitto_passwd -c /etc/mosquitto/passwd growbox || error_exit "MQTT Nutzer konnte nicht erstellt werden"
+# Hauptinstallation
+main() {
+    print_header "Starte Growbox Setup"
+    system_update
+    install_packages
+    install_mjpg_streamer
+    setup_mariadb
+    install_homeassistant
+    final_checks
+    
+    echo -e "\n${GREEN}=== Installation erfolgreich! ==="
+    echo -e "Ein Neustart wird empfohlen.${NC}"
+}
 
-sudo tee /etc/mosquitto/conf.d/growbox.conf > /dev/null <<EOF
-listener 1883
-allow_anonymous false
-password_file /etc/mosquitto/passwd
-EOF
-
-sudo systemctl restart mosquitto
-
-# Finale Konfiguration
-print_header "10. Abschluss"
-echo -e "${GREEN}\n=== Installation abgeschlossen! ===${NC}"
-echo -e "Kamera:   http://$(hostname -I | awk '{print $1}'):8080"
-echo -e "Home Assistant: http://$(hostname -I | awk '{print $1}'):8123"
-echo -e "Grafana:  http://$(hostname -I | awk '{print $1}'):3000"
-echo -e "MQTT:     Broker auf Port 1883 (Nutzer: growbox)"
-
-echo -e "\n${YELLOW}LocalTuya Beispiel-Konfiguration (in configuration.yaml):${NC}" | tee -a "$LOG_FILE"
-cat <<EOF | tee -a "$LOG_FILE"
-switch:
-  - platform: localtuya
-    host: "192.168.1.100"
-    local_key: "dein_lokaler_key"
-    device_id: "tuya_device_id"
-    protocol: "3.3"
-    switches:
-      steckdose_1:
-        name: "Growbox Licht"
-        id: 1
-      steckdose_2:
-        name: "Growbox Lüfter"
-        id: 2
-EOF
-
-echo -e "\n${BLUE}Nach dem ersten Start von Home Assistant:"
-echo "1. LocalTuya Integration manuell hinzufügen"
-echo "2. MQTT Integration hinzufügen (Broker: localhost, Port: 1883)"
-echo -e "${NC}"
-
-# Neustart
-echo -e "${YELLOW}\nNeustart empfohlen. Jetzt neustarten? (j/n)${NC}"
-read -r answer
-if [[ "$answer" =~ [jJ] ]]; then
-    sudo reboot
-fi
+# Ausführung
+main
