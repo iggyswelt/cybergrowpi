@@ -2,15 +2,15 @@
 
 Willkommen bei **CyberGrowPi**, einem DIY Open-Source Bastelprojekt des YouTube-Kanals **@iggyswelt** https://www.youtube.com/@iggyswelt ! Dieses Projekt zeigt, wie du eine kostengünstige, automatisierte Growbox mit einem Raspberry Pi, verschiedenen Sensoren und einer WLAN-Steckdosenleiste baust. Ziel ist es, die Umweltbedingungen für Pflanzen wie Hanf und Tomaten zu optimieren, ohne teure kommerzielle Systeme wie AC Infinity oder Spider Farmer zu kaufen. Alle Details, Schaltpläne und der Code werden hier auf GitHub open-source bereitgestellt, damit du dein eigenes System nachbauen kannst.
 
-nützliche Befehle:
-# System-Status
+# Nützliche Befehle:
+### System-Status
 sudo systemctl status growcam.service home-assistant@homeassistant
 
-# Logs anzeigen
+### Logs anzeigen
 journalctl -u home-assistant@homeassistant -f  # HA-Logs live
 tail -f /var/log/growbox_control.log          # Kontroll-Script
 
-# Kamera testen
+### Kamera testen
 curl http://die-ri-IPAdresse:8080/?action=snapshot -o test.jpg && eog test.jpg
 
 ## Projektübersicht
