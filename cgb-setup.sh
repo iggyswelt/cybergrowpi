@@ -8,7 +8,7 @@
 # - Automatische Selbstdiagnose
 
 # --- Konfiguration ---
-USER="Iggy"
+USER="iggy"
 LOG_FILE="$HOME/growbox_setup.log"
 VENV_DIR="$HOME/growbox_venv"
 HA_DIR="/srv/homeassistant"
