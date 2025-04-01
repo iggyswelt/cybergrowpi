@@ -158,36 +158,33 @@ setup_gpio_config() {
 setup_camera() {
   echo -e "${BLUE}>>> Kamera-Installation...${NC}"
   
-  # Alte Installation entfernen
+  # Vorherige Installation bereinigen
   sudo rm -rf /opt/mjpg-streamer
   
-  # Neu installieren mit optimierten Parametern
-  sudo mkdir -p /opt/mjpg-streamer
-  sudo chown $USER:$USER /opt/mjpg-streamer
+  # Neuinstallation mit optimierten Einstellungen
   git clone https://github.com/jacksonliam/mjpg-streamer.git /opt/mjpg-streamer
-  cd /opt/mjpg-streamer/mjpg-streamer-experimental || return
+  cd /opt/mjpg-streamer/mjpg-streamer-experimental
   
-  # Fix für Kompilierungsprobleme
-  sudo sed -i 's/PLUGINS += input_gspcav1.so//' Makefile
-  sudo sed -i 's/PLUGINS += output_autofocus.so//' Makefile
-  
-  make || {
-    echo -e "${YELLOW}>>> Erster Kompilierungsversuch fehlgeschlagen, versuche es mit Alternativen...${NC}"
-    sudo apt-get install -y cmake libjpeg9-dev
-    make clean && make
+  # Erweiterte Kompilierungsoptionen
+  make CMAKE_BUILD_TYPE=Release \
+    CFLAGS+="-O2 -fPIC" \
+    LDFLAGS+="-Wl,--no-as-needed -ldl" || {
+    echo -e "${YELLOW}>>> Kompilierung fehlgeschlagen, versuche alternativen Ansatz...${NC}"
+    make clean
+    make USE_LIBV4L2=true
   }
   
   sudo make install
-  cd
-
-  # Service mit verbesserten Parametern
+  
+  # Systemd Service mit erweiterten Optionen
   sudo tee /etc/systemd/system/growcam.service >/dev/null <<EOF
 [Unit]
 Description=Growbox Camera Service
 After=network.target
+StartLimitIntervalSec=0
 
 [Service]
-Type=simple
+Type=exec
 User=$USER
 Environment="LD_LIBRARY_PATH=/usr/local/lib"
 ExecStart=/usr/local/bin/mjpg_streamer \
@@ -201,13 +198,7 @@ WantedBy=multi-user.target
 EOF
 
   sudo systemctl daemon-reload
-  sudo systemctl enable --now growcam.service || {
-    echo -e "${YELLOW}>>> Kamera-Fallback: Manueller Start...${NC}"
-    /usr/local/bin/mjpg_streamer -i "input_uvc.so" -o "output_http.so" &
-  }
-  
-  # Wartezeit für Kamera-Initialisierung
-  sleep 5
+  sudo systemctl enable --now growcam.service
 }
 
 # --- Home Assistant Installation ---
