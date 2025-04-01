@@ -61,15 +61,19 @@ prepare_system() {
   wget -q -O - https://packages.grafana.com/gpg.key | gpg --dearmor | sudo tee /usr/share/keyrings/grafana.gpg >/dev/null
   echo "deb [signed-by=/usr/share/keyrings/grafana.gpg] https://packages.grafana.com/oss/deb stable main" | sudo tee /etc/apt/sources.list.d/grafana.list
 
-  # Pakete mit erweiterten Abhängigkeiten
+  # Pakete mit alternativen Abhängigkeiten
   sudo apt-get install -y git python3 python3-venv python3-pip \
     i2c-tools libgpiod2 libjpeg62-turbo-dev libv4l-dev \
     mosquitto influxdb grafana mariadb-server pigpio \
-    libatlas-base-dev libopenjp2-7 libtiff5 \
+    libatlas-base-dev libopenjp2-7 libtiff-dev \  # Geändert von libtiff5 zu libtiff-dev
     lm-sensors v4l-utils fswebcam ffmpeg motion \
     nginx npm || {
     echo -e "${RED}>>> Kritischer Fehler bei Paketinstallation!${NC}"
-    exit 1
+    echo -e "${YELLOW}>>> Versuche alternative Paketquellen...${NC}"
+    
+    # Fallback für ältere Debian-Versionen
+    sudo apt-get install -y libtiff5 || sudo apt-get install -y libtiff4
+    sudo apt-get install -y --fix-broken
   }
 
   # Video-Gruppe für Kamera-Zugriff
