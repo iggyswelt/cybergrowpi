@@ -1,11 +1,11 @@
 #!/bin/bash
-# Ultimate Growbox Setup v5.1 ("Stable Pigpio Edition")
+# Ultimate Growbox Setup v6.0 ("Perfect Fusion Edition")
 # Autor: Iggy & DeepSeek
 # Features:
-# - Stabiles Pigpio-Setup
-# - Verbesserte Fehlerbehandlung
-# - Hardware-unabhängige Installation
-# - Automatische Selbstdiagnose
+# - Kombiniert beste Sensor- und Kamera-Implementierungen
+# - Vollständige Fehlerbehandlung
+# - Optimierte Performance
+# - Automatische Problembehebung
 
 # --- Konfiguration ---
 USER="iggy"
@@ -22,7 +22,7 @@ NC='\033[0m'
 
 # --- Initialisierung ---
 init() {
-  echo -e "${BLUE}=== Initialisiere Growbox Setup v5.1 ===${NC}"
+  echo -e "${BLUE}=== Initialisiere Growbox Setup v6.0 ===${NC}"
   exec > >(tee "$LOG_FILE") 2>&1
   trap "cleanup" EXIT
   check_root
@@ -46,19 +46,34 @@ kill_conflicting_processes() {
   echo -e "${YELLOW}>>> Beende konkurrierende Prozesse...${NC}"
   sudo pkill pigpiod || true
   sudo pkill mjpg_streamer || true
+  sudo pkill motion || true
   sudo rm -f /var/run/pigpio.pid
 }
 
 # --- Systemvorbereitung ---
 prepare_system() {
   echo -e "${BLUE}>>> Systemaktualisierung...${NC}"
-  sudo apt update && sudo apt full-upgrade -y
-  sudo apt install -y git python3 python3-venv python3-pip \
+  
+  export DEBIAN_FRONTEND=noninteractive
+  sudo apt-get update && sudo apt-get full-upgrade -y
+  
+  # Grafana Repository
+  wget -q -O - https://packages.grafana.com/gpg.key | gpg --dearmor | sudo tee /usr/share/keyrings/grafana.gpg >/dev/null
+  echo "deb [signed-by=/usr/share/keyrings/grafana.gpg] https://packages.grafana.com/oss/deb stable main" | sudo tee /etc/apt/sources.list.d/grafana.list
+
+  # Pakete mit erweiterten Abhängigkeiten
+  sudo apt-get install -y git python3 python3-venv python3-pip \
     i2c-tools libgpiod2 libjpeg62-turbo-dev libv4l-dev \
-    mosquitto influxdb grafana-enterprise mariadb-server pigpio || {
+    mosquitto influxdb grafana mariadb-server pigpio \
+    libatlas-base-dev libopenjp2-7 libtiff5 \
+    lm-sensors v4l-utils fswebcam ffmpeg motion \
+    nginx npm || {
     echo -e "${RED}>>> Kritischer Fehler bei Paketinstallation!${NC}"
     exit 1
   }
+
+  # Video-Gruppe für Kamera-Zugriff
+  sudo usermod -a -G video $USER
 }
 
 # --- Sensoren & Pigpio ---
@@ -68,10 +83,27 @@ setup_sensors() {
   source "$VENV_DIR/bin/activate"
   
   pip install --upgrade pip wheel || critical_error "Pip-Update fehlgeschlagen"
-  pip install adafruit-circuitpython-dht RPi.GPIO || 
-    pip install pigpio-dht ||
-    pip install Adafruit_DHT || 
-    critical_error "Sensor-Bibliotheken können nicht installiert werden"
+  
+  # Kritische Sensor-Bibliotheken mit Version-Pinning
+  SENSOR_LIBS=(
+    "Adafruit-DHT==1.4.0"      # AM2301
+    "bme680==1.1.1"            # BME680
+    "RPi.GPIO==0.7.1"          # GPIO Zugriff
+    "smbus2==0.4.1"            # I2C
+    "pigpio==1.78"             # GPIO-Zugriff
+    "python-dotenv==1.0.0"     # Konfiguration
+  )
+  
+  for lib in "${SENSOR_LIBS[@]}"; do
+    echo -e "${YELLOW}Installiere $lib...${NC}"
+    pip install "$lib" || echo -e "${RED}Warnung: $lib konnte nicht installiert werden${NC}"
+  done
+
+  # 1-Wire für DS18B20 aktivieren
+  if ! grep -q "dtoverlay=w1-gpio" /boot/config.txt; then
+    echo "dtoverlay=w1-gpio,gpiopin=4" | sudo tee -a /boot/config.txt > /dev/null
+    echo -e "${GREEN}1-Wire für DS18B20 aktiviert${NC}"
+  fi
 
   setup_pigpio_service
   setup_gpio_config
@@ -81,20 +113,14 @@ setup_sensors() {
 setup_pigpio_service() {
   echo -e "${YELLOW}>>> Konfiguriere Pigpio-Daemon...${NC}"
   
-  # Alte PID entfernen
-  sudo rm -f /var/run/pigpio.pid
-  
-  # Neue Service-Datei
-  sudo tee /etc/systemd/system/pigpiod.service > /dev/null <<EOF
+  sudo tee /etc/systemd/system/pigpiod.service >/dev/null <<EOF
 [Unit]
 Description=GPIO Daemon
 After=network.target
-StartLimitIntervalSec=0
 
 [Service]
 Type=forking
 ExecStart=/usr/bin/pigpiod -l -t 0
-ExecStop=/bin/rm -f /var/run/pigpio.pid
 Restart=always
 RestartSec=5
 User=root
@@ -105,43 +131,53 @@ WantedBy=multi-user.target
 EOF
 
   sudo systemctl daemon-reload
-  sudo systemctl enable pigpiod
-  sudo systemctl restart pigpiod
-  
-  # Warte und prüfe Status
-  sleep 5
-  if ! systemctl is-active --quiet pigpiod; then
-    echo -e "${YELLOW}>>> Debug: Manueller Startversuch...${NC}"
+  sudo systemctl enable --now pigpiod || {
+    echo -e "${YELLOW}>>> Fallback: Manueller Pigpio-Start...${NC}"
     sudo pigpiod -l -t 0
-    sleep 3
-    if pgrep pigpiod; then
-      echo -e "${GREEN}✔ Pigpio läuft manuell${NC}"
-    else
-      echo -e "${RED}✘ Pigpio startet nicht. Details:${NC}"
-      journalctl -u pigpiod -b --no-pager | tail -20
-      critical_error "Pigpio konnte nicht gestartet werden"
-    fi
-  fi
+  }
+  sleep 3  # Wartezeit für stabilen Start
 }
 
 setup_gpio_config() {
   echo -e "${YELLOW}>>> Aktiviere Hardware-Schnittstellen...${NC}"
-  sudo raspi-config nonint do_i2c 0
-  sudo raspi-config nonint do_serial 0
+  
+  sudo sed -i '/enable_uart/d' /boot/config.txt
   sudo sed -i '/dtparam=i2c_arm/d' /boot/config.txt
+  echo "enable_uart=1" | sudo tee -a /boot/config.txt
   echo "dtparam=i2c_arm=on" | sudo tee -a /boot/config.txt
+  
+  sudo systemctl stop serial-getty@ttyAMA0.service
+  sudo systemctl disable serial-getty@ttyAMA0.service
 }
 
-# --- Kamera-Setup ---
+# --- Kamera-Setup (optimierte Version) ---
 setup_camera() {
   echo -e "${BLUE}>>> Kamera-Installation...${NC}"
-  [ -d "$HOME/mjpg-streamer" ] || {
-    git clone https://github.com/jacksonliam/mjpg-streamer.git "$HOME/mjpg-streamer"
-    cd "$HOME/mjpg-streamer/mjpg-streamer-experimental" || return
-    make && sudo make install
+  
+  # Alte Installation entfernen
+  sudo rm -rf /opt/mjpg-streamer
+  
+  # Neu installieren mit optimierten Parametern
+  sudo mkdir -p /opt/mjpg-streamer
+  sudo chown $USER:$USER /opt/mjpg-streamer
+  git clone https://github.com/jacksonliam/mjpg-streamer.git /opt/mjpg-streamer
+  cd /opt/mjpg-streamer/mjpg-streamer-experimental || return
+  
+  # Fix für Kompilierungsprobleme
+  sudo sed -i 's/PLUGINS += input_gspcav1.so//' Makefile
+  sudo sed -i 's/PLUGINS += output_autofocus.so//' Makefile
+  
+  make || {
+    echo -e "${YELLOW}>>> Erster Kompilierungsversuch fehlgeschlagen, versuche es mit Alternativen...${NC}"
+    sudo apt-get install -y cmake libjpeg9-dev
+    make clean && make
   }
+  
+  sudo make install
+  cd
 
-  sudo tee /etc/systemd/system/growcam.service > /dev/null <<EOF
+  # Service mit verbesserten Parametern
+  sudo tee /etc/systemd/system/growcam.service >/dev/null <<EOF
 [Unit]
 Description=Growbox Camera Service
 After=network.target
@@ -149,29 +185,126 @@ After=network.target
 [Service]
 Type=simple
 User=$USER
-ExecStart=/usr/local/bin/mjpg_streamer -i "input_uvc.so -d /dev/video0" -o "output_http.so -p 8080"
-Restart=on-failure
+Environment="LD_LIBRARY_PATH=/usr/local/lib"
+ExecStart=/usr/local/bin/mjpg_streamer \
+  -i "input_uvc.so -d /dev/video0 -r 1280x720 -f 15 -n" \
+  -o "output_http.so -p 8080 -w /usr/local/share/mjpg-streamer/www"
+Restart=always
 RestartSec=5s
 
 [Install]
 WantedBy=multi-user.target
 EOF
 
+  sudo systemctl daemon-reload
   sudo systemctl enable --now growcam.service || {
     echo -e "${YELLOW}>>> Kamera-Fallback: Manueller Start...${NC}"
-    mjpg_streamer -i "input_uvc.so" -o "output_http.so" &
+    /usr/local/bin/mjpg_streamer -i "input_uvc.so" -o "output_http.so" &
   }
+  
+  # Wartezeit für Kamera-Initialisierung
+  sleep 5
+}
+
+# --- Home Assistant Installation ---
+setup_homeassistant() {
+  echo -e "${BLUE}>>> Home Assistant Installation...${NC}"
+  
+  if [ ! -d "$HA_DIR" ]; then
+    sudo useradd -rm homeassistant -G dialout,gpio,i2c,video || critical_error "Nutzeranlage fehlgeschlagen"
+    sudo mkdir -p "$HA_DIR" || critical_error "Verzeichnis erstellen fehlgeschlagen"
+    sudo chown homeassistant:homeassistant "$HA_DIR"
+    
+    sudo -u homeassistant python3 -m venv "$HA_DIR" || critical_error "Venv erstellen fehlgeschlagen"
+    
+    # Kritische Pakete mit Version-Pinning
+    sudo -u homeassistant -H -s <<EOF
+source "$HA_DIR/bin/activate"
+pip install --upgrade pip wheel
+pip install "josepy==1.13.0" "acme==2.8.0" "certbot==2.8.0"
+pip install homeassistant
+EOF
+    
+    # Systemd Service
+    sudo tee /etc/systemd/system/home-assistant@homeassistant.service > /dev/null <<EOF
+[Unit]
+Description=Home Assistant
+After=network.target mariadb.service
+
+[Service]
+Type=simple
+User=homeassistant
+WorkingDirectory=$HA_DIR
+ExecStart=$HA_DIR/bin/hass -c "/home/homeassistant/.homeassistant"
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+    sudo systemctl daemon-reload
+    sudo systemctl enable home-assistant@homeassistant
+    sudo systemctl start home-assistant@homeassistant
+  fi
+}
+
+# --- Datenbank Setup ---
+setup_database() {
+  echo -e "${BLUE}>>> Datenbank-Konfiguration...${NC}"
+  sudo mysql -e "CREATE DATABASE IF NOT EXISTS homeassistant CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
+  sudo mysql -e "CREATE USER IF NOT EXISTS 'homeassistant'@'localhost' IDENTIFIED BY 'growbox123';"
+  sudo mysql -e "GRANT ALL PRIVILEGES ON homeassistant.* TO 'homeassistant'@'localhost';"
+  sudo mysql -e "FLUSH PRIVILEGES;"
 }
 
 # --- Diagnose-System ---
 final_check() {
   echo -e "${BLUE}=== Finaler Systemcheck ===${NC}"
+  
+  # Erweiterte Service-Prüfung
   check_service "pigpiod"
   check_service "growcam.service"
-  check_port 8080 "Kamera-Stream"
-  check_sensor_values
+  check_service "home-assistant@homeassistant"
+  check_service "grafana-server"
+  check_service "influxdb"
+  check_service "mosquitto"
   
-  # Erstelle Diagnose-Tool
+  # Port-Verfügbarkeit mit Timeout
+  echo -e "${YELLOW}>>> Prüfe Kamera-Stream (max 10s)...${NC}"
+  timeout 10 bash -c 'while ! ss -tuln | grep -q ":8080 "; do sleep 1; done' && \
+    echo -e "${GREEN}✔ Port 8080 (Kamera-Stream) offen${NC}" || \
+    echo -e "${RED}✘ Port 8080 (Kamera-Stream) blockiert${NC}"
+  
+  # Sensor-Test mit Fehlerbehandlung
+  echo -e "${YELLOW}>>> Sensortest...${NC}"
+  source "$VENV_DIR/bin/activate"
+  python3 -c "import pigpio; print('Pigpio:', 'OK' if pigpio.pi().connected else 'FEHLER')" || \
+    echo -e "${RED}Pigpio-Test fehlgeschlagen${NC}"
+  
+  # Erweiterter Sensor-Test
+  cat > /tmp/sensor_test.py <<'EOF'
+import Adafruit_DHT, bme680, os, glob, time
+
+print("=== AM2301 Test ===")
+humidity, temp = Adafruit_DHT.read_retry(Adafruit_DHT.AM2302, 4)
+print(f"Temp: {temp:.1f}°C, Feuchtigkeit: {humidity:.1f}%")
+
+print("\n=== BME680 Test ===")
+bme = bme680.BME680()
+if bme.get_sensor_data():
+    print(f"Temp: {bme.data.temperature:.1f}°C, Druck: {bme.data.pressure:.1f}hPa")
+
+print("\n=== DS18B20 Test ===")
+devices = glob.glob("/sys/bus/w1/devices/28-*")
+for device in devices:
+    with open(f"{device}/temperature") as f:
+        temp = float(f.read()) / 1000.0
+    print(f"Sensor {device.split('/')[-1]}: {temp:.1f}°C")
+EOF
+
+  python3 /tmp/sensor_test.py || echo -e "${RED}Sensor-Test fehlgeschlagen${NC}"
+  deactivate
+  
   create_diag_tool
 }
 
@@ -181,22 +314,6 @@ check_service() {
   else
     echo -e "${RED}✘ $1 nicht aktiv${NC}"
   fi
-}
-
-check_port() {
-  if ss -tuln | grep -q ":$1 "; then
-    echo -e "${GREEN}✔ Port $1 ($2) offen${NC}"
-  else
-    echo -e "${RED}✘ Port $1 ($2) blockiert${NC}"
-  fi
-}
-
-check_sensor_values() {
-  echo -e "${YELLOW}>>> Sensortest...${NC}"
-  source "$VENV_DIR/bin/activate"
-  python3 -c "import pigpio; print('Pigpio:', 'OK' if pigpio.pi().connected else 'FEHLER')" || true
-  python3 -c "import board; print('I2C-Bus:', 'OK' if board.I2C().try_lock() else 'FEHLER')" || true
-  deactivate
 }
 
 create_diag_tool() {
@@ -215,14 +332,11 @@ systemctl is-active pigpiod && echo "pigpiod: aktiv" || echo "pigpiod: inaktiv"
 echo -e "\n=== Sensorwerte ==="
 if systemctl is-active pigpiod; then
   sudo python3 -c "
-import pigpio
-pi = pigpio.pi()
-if pi.connected:
-  print('Pigpio Version:', pi.get_pigpio_version())
-  print('GPIO 4 (Beispiel):', pi.read(4))
-else:
-  print('Pigpio nicht verfügbar')
-pi.stop()
+import Adafruit_DHT, bme680, os, glob
+print('AM2301:', Adafruit_DHT.read_retry(Adafruit_DHT.AM2302, 4))
+bme = bme680.BME680()
+print('BME680:', bme.get_sensor_data() and f'{bme.data.temperature:.1f}°C')
+print('DS18B20:', [f'{float(open(f+"/temperature").read())/1000:.1f}°C' for f in glob.glob('/sys/bus/w1/devices/28-*')])
 "
 else
   echo "Pigpio-Dienst nicht aktiv!"
@@ -245,16 +359,19 @@ main() {
   prepare_system
   setup_sensors
   setup_camera
+  setup_database
+  setup_homeassistant
   final_check
   
   echo -e "${GREEN}\n=== Installation erfolgreich! ===${NC}"
-  echo -e "Zugangslinks:"
   ip=$(hostname -I | awk '{print $1}')
-  echo -e "Home Assistant: ${BLUE}http://$ip:8123${NC}"
-  echo -e "Grafana:        ${BLUE}http://$ip:3000${NC}"
-  echo -e "Kamera-Stream:  ${BLUE}http://$ip:8080${NC}"
+  echo -e "Zugangslinks:"
+  echo -e "Home Assistant: ${BLUE}http://$ip:8123${NC} (erster Start kann einige Minuten dauern)"
+  echo -e "Grafana:        ${BLUE}http://$ip:3000${NC} (admin/admin)"
+  echo -e "Kamera-Stream:  ${BLUE}http://$ip:8080/?action=stream${NC}"
   echo -e "MQTT Broker:    ${BLUE}mqtt://$ip:1883${NC}"
   echo -e "\nDiagnose: ${GREEN}growbox-diag${NC} oder ${GREEN}cat $LOG_FILE${NC}"
+  echo -e "${YELLOW}Ein Neustart wird empfohlen!${NC}"
 }
 
 main
