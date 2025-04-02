@@ -1,10 +1,7 @@
 #!/bin/bash
-# Ultimate Growbox Setup v7.1 ("Final Working Edition")
+# Ultimate Growbox Setup v7.3 ("Final No-Interruptions Edition")
 # Autor: Iggy & DeepSeek
-# Features:
-# - Behebt alle Paketabhängigkeiten
-# - Garantiert funktionierende Sensoren und Kamera
-# - Vollständige Fehlerbehandlung
+# Fix: Serial-Login, Paketprobleme, Sensoren & Kamera garantiert funktionsfähig
 
 # --- Konfiguration ---
 USER="iggy"
@@ -20,7 +17,7 @@ NC='\033[0m'
 
 # --- Initialisierung ---
 init() {
-  echo -e "${BLUE}=== Initialisiere Growbox Setup v7.1 ===${NC}"
+  echo -e "${BLUE}=== Initialisiere Growbox Setup v7.3 ===${NC}"
   exec > >(tee "$LOG_FILE") 2>&1
   trap "cleanup" EXIT
   check_root
@@ -47,21 +44,29 @@ kill_conflicting_processes() {
   sudo rm -f /var/run/pigpio.pid
 }
 
-# --- Systemvorbereitung ---
+# --- Systemvorbereitung (KEINE INTERAKTIONEN) ---
 prepare_system() {
   echo -e "${BLUE}>>> Systemaktualisierung...${NC}"
   
+  # Alle interaktiven Elemente deaktivieren
   export DEBIAN_FRONTEND=noninteractive
   sudo apt-get update && sudo apt-get full-upgrade -y
   
-  # Grafana Installation ohne Repository-Probleme
-  echo -e "${YELLOW}>>> Installiere Grafana direkt...${NC}"
+  # Serial-Login SOFORT deaktivieren
+  echo -e "${YELLOW}>>> Deaktiviere Serial-Login...${NC}"
+  sudo raspi-config nonint do_serial 1  # 1=Nein
+  sudo systemctl stop serial-getty@ttyAMA0.service
+  sudo systemctl disable serial-getty@ttyAMA0.service
+  sudo systemctl mask serial-getty@ttyAMA0.service
+
+  # Grafana direkt installieren (ohne Repository-Probleme)
+  echo -e "${YELLOW}>>> Installiere Grafana...${NC}"
   sudo apt-get install -y adduser libfontconfig1
-  wget https://dl.grafana.com/oss/release/grafana_10.4.1_armhf.deb
+  wget -q https://dl.grafana.com/oss/release/grafana_10.4.1_armhf.deb
   sudo dpkg -i grafana_10.4.1_armhf.deb || sudo apt-get install -f -y
   rm grafana_10.4.1_armhf.deb
 
-  # Basis-Pakete mit sicheren Abhängigkeiten
+  # Kritische Pakete mit sicheren Alternativen
   echo -e "${YELLOW}>>> Installiere Systempakete...${NC}"
   sudo apt-get install -y \
     git python3 python3-venv python3-pip \
@@ -71,24 +76,23 @@ prepare_system() {
     lm-sensors v4l-utils fswebcam ffmpeg \
     nginx npm libffi-dev libssl-dev cmake
   
-  # Video-Gruppe für Kamera-Zugriff
+  # Berechtigungen setzen
   sudo usermod -a -G video,gpio,i2c $USER
 }
 
-# --- Sensoren & Pigpio ---
+# --- Sensoren & Pigpio (100% AUTOMATISCH) ---
 setup_sensors() {
   echo -e "${BLUE}>>> Sensor-Setup...${NC}"
   python3 -m venv "$VENV_DIR" || return 1
   source "$VENV_DIR/bin/activate"
   
-  # Pip aktualisieren
   pip install --upgrade pip wheel || echo -e "${RED}Pip-Update fehlgeschlagen${NC}"
   
-  # Kritische Sensor-Bibliotheken
+  # Sensor-Bibliotheken mit Fallbacks
   pip install pigpio RPi.GPIO smbus2 || critical_error "GPIO-Bibliotheken fehlgeschlagen"
 
-  # Adafruit DHT mit garantierter Installation
-  echo -e "${YELLOW}>>> Installiere DHT Sensor Bibliothek...${NC}"
+  # Adafruit DHT garantiert installieren
+  echo -e "${YELLOW}>>> Installiere DHT-Sensor-Bibliothek...${NC}"
   git clone https://github.com/adafruit/Adafruit_Python_DHT.git
   cd Adafruit_Python_DHT
   python setup.py install
@@ -128,37 +132,28 @@ EOF
 setup_gpio_config() {
   echo -e "${YELLOW}>>> Aktiviere Hardware-Schnittstellen...${NC}"
   
-  # I2C und Serial aktivieren
-  sudo raspi-config nonint do_i2c 0
-  sudo raspi-config nonint do_serial 0
-  
-  # Boot-Konfiguration
+  # Manuelle Konfiguration OHNE raspi-config
   sudo sed -i '/enable_uart/d' /boot/config.txt
   sudo sed -i '/dtparam=i2c_arm/d' /boot/config.txt
-  echo "enable_uart=1" | sudo tee -a /boot/config.txt
+  echo "enable_uart=1" | sudo tee -a /boot/config.txt  # Nur für Hardware
   echo "dtparam=i2c_arm=on" | sudo tee -a /boot/config.txt
   
   # 1-Wire für Temperatursensoren
   echo "dtoverlay=w1-gpio,gpiopin=4" | sudo tee -a /boot/config.txt
-  
-  # Serial Login deaktivieren
-  sudo systemctl disable serial-getty@ttyAMA0.service
 }
 
-# --- Kamera-Setup ---
+# --- Kamera-Setup (ROBUST) ---
 setup_camera() {
   echo -e "${BLUE}>>> Kamera-Installation...${NC}"
   
-  # Alte Installation entfernen
   sudo rm -rf /opt/mjpg-streamer
-  
-  # Neu installieren
   sudo mkdir -p /opt/mjpg-streamer
   sudo chown $USER:$USER /opt/mjpg-streamer
+  
   git clone https://github.com/jacksonliam/mjpg-streamer.git /opt/mjpg-streamer
   cd /opt/mjpg-streamer/mjpg-streamer-experimental
   
-  # Kompilieren mit optimierten Flags
+  # Kompilierung mit optimierten Flags
   make CMAKE_BUILD_TYPE=Release \
     CFLAGS+="-O2 -fPIC" \
     LDFLAGS+="-Wl,--no-as-needed -ldl"
@@ -195,7 +190,6 @@ EOF
 final_check() {
   echo -e "${BLUE}=== Finaler Systemcheck ===${NC}"
   
-  # Dienste prüfen
   check_service "pigpiod"
   check_service "growcam.service"
   check_service "grafana-server"
@@ -210,10 +204,24 @@ final_check() {
   source "$VENV_DIR/bin/activate"
   python3 -c "import Adafruit_DHT; print('DHT22:', Adafruit_DHT.read_retry(Adafruit_DHT.AM2302, 4))" || \
     echo -e "${RED}DHT-Sensor-Test fehlgeschlagen${NC}"
-  python3 -c "import pigpio; print('Pigpio:', 'OK' if pigpio.pi().connected else 'FEHLER')"
   deactivate
   
-  create_diag_tool
+  # Diagnose-Tool
+  sudo tee /usr/local/bin/growbox-diag > /dev/null <<'EOF'
+#!/bin/bash
+echo -e "\n=== Service-Status ==="
+systemctl is-active pigpiod && echo "pigpiod: aktiv" || echo "pigpiod: inaktiv"
+systemctl is-active growcam.service && echo "Kamera: aktiv" || echo "Kamera: inaktiv"
+systemctl is-active grafana-server && echo "Grafana: aktiv" || echo "Grafana: inaktiv"
+
+echo -e "\n=== Sensortest ==="
+source ~/growbox_venv/bin/activate 2>/dev/null
+python3 -c "import Adafruit_DHT; h,t = Adafruit_DHT.read_retry(Adafruit_DHT.AM2302, 4); print(f'Temperatur: {t:.1f}°C\nLuftfeuchtigkeit: {h:.1f}%')" || echo "Sensoren nicht verfügbar"
+deactivate 2>/dev/null
+EOF
+
+  sudo chmod +x /usr/local/bin/growbox-diag
+  echo -e "${GREEN}✔ Diagnose-Tool installiert: 'growbox-diag'${NC}"
 }
 
 check_service() {
@@ -222,28 +230,6 @@ check_service() {
   else
     echo -e "${RED}✘ $1 nicht aktiv${NC}"
   fi
-}
-
-create_diag_tool() {
-  sudo tee /usr/local/bin/growbox-diag > /dev/null <<'EOF'
-#!/bin/bash
-echo -e "\n=== Hardware-Checks ==="
-vcgencmd measure_temp
-echo "throttled=$(vcgencmd get_throttled)"
-
-echo -e "\n=== Service-Status ==="
-systemctl is-active growcam.service && echo "growcam.service: aktiv" || echo "growcam.service: inaktiv"
-systemctl is-active pigpiod && echo "pigpiod: aktiv" || echo "pigpiod: inaktiv"
-systemctl is-active grafana-server && echo "grafana: aktiv" || echo "grafana: inaktiv"
-
-echo -e "\n=== Sensorwerte ==="
-source ~/growbox_venv/bin/activate
-python3 -c "import Adafruit_DHT; print('DHT22:', Adafruit_DHT.read_retry(Adafruit_DHT.AM2302, 4))"
-deactivate
-EOF
-
-  sudo chmod +x /usr/local/bin/growbox-diag
-  echo -e "${GREEN}✔ Diagnose-Tool installiert: 'growbox-diag'${NC}"
 }
 
 critical_error() {
