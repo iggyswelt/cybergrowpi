@@ -81,9 +81,17 @@ prepare_system() {
   export DEBIAN_FRONTEND=noninteractive
   
 # Grafana Repository-Sicherheit
-wget -q https://dl.grafana.com/gpg.key || critical_error "Grafana-GPG-Key fehlgeschlagen"
-sudo apt-key add gpg.key || critical_error "GPG-Key-Import fehlgeschlagen"
-rm gpg.key
+echo -e "${YELLOW}>>> Grafana-Repositorien konfigurieren...${NC}"
+# Alte Schlüssel entfernen
+sudo rm -f /usr/share/keyrings/grafana* /etc/apt/sources.list.d/grafana.list
+
+# Neuen Schlüssel mit moderner Methode installieren
+sudo mkdir -p /usr/share/keyrings
+curl -fsSL https://apt.grafana.com/gpg.key | gpg --dearmor | sudo tee /usr/share/keyrings/grafana.gpg >/dev/null || critical_error "GPG-Key-Import fehlgeschlagen"
+
+# Repository mit expliziter Schlüsselbindung hinzufügen
+echo "deb [signed-by=/usr/share/keyrings/grafana.gpg] https://apt.grafana.com stable main" | sudo tee /etc/apt/sources.list.d/grafana.list || critical_error "Repository-Konfiguration fehlgeschlagen"
+
 
   sudo apt-get update && sudo apt-get full-upgrade -y
   
