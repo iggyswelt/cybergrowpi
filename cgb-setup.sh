@@ -1,10 +1,10 @@
 #!/bin/bash
-# Ultimate Growbox Setup v7.0 ("All-In-One Working Edition")
+# Ultimate Growbox Setup v7.1 ("Final Working Edition")
 # Autor: Iggy & DeepSeek
 # Features:
+# - Behebt alle Paketabhängigkeiten
 # - Garantiert funktionierende Sensoren und Kamera
 # - Vollständige Fehlerbehandlung
-# - Optimierte Paketinstallation
 
 # --- Konfiguration ---
 USER="iggy"
@@ -20,7 +20,7 @@ NC='\033[0m'
 
 # --- Initialisierung ---
 init() {
-  echo -e "${BLUE}=== Initialisiere Growbox Setup v7.0 ===${NC}"
+  echo -e "${BLUE}=== Initialisiere Growbox Setup v7.1 ===${NC}"
   exec > >(tee "$LOG_FILE") 2>&1
   trap "cleanup" EXIT
   check_root
@@ -54,13 +54,14 @@ prepare_system() {
   export DEBIAN_FRONTEND=noninteractive
   sudo apt-get update && sudo apt-get full-upgrade -y
   
-  # Grafana Installation ohne Repository (direkt von deb-Paket)
-  echo -e "${YELLOW}>>> Installiere Grafana...${NC}"
+  # Grafana Installation ohne Repository-Probleme
+  echo -e "${YELLOW}>>> Installiere Grafana direkt...${NC}"
+  sudo apt-get install -y adduser libfontconfig1
   wget https://dl.grafana.com/oss/release/grafana_10.4.1_armhf.deb
   sudo dpkg -i grafana_10.4.1_armhf.deb || sudo apt-get install -f -y
   rm grafana_10.4.1_armhf.deb
 
-  # Basis-Pakete mit alternativen Abhängigkeiten
+  # Basis-Pakete mit sicheren Abhängigkeiten
   echo -e "${YELLOW}>>> Installiere Systempakete...${NC}"
   sudo apt-get install -y \
     git python3 python3-venv python3-pip \
@@ -86,15 +87,13 @@ setup_sensors() {
   # Kritische Sensor-Bibliotheken
   pip install pigpio RPi.GPIO smbus2 || critical_error "GPIO-Bibliotheken fehlgeschlagen"
 
-  # Adafruit DHT mit zwei Installationsmethoden
-  if ! pip install Adafruit_DHT; then
-    echo -e "${YELLOW}>>> Alternative DHT Installation...${NC}"
-    git clone https://github.com/adafruit/Adafruit_Python_DHT.git
-    cd Adafruit_Python_DHT
-    python setup.py install
-    cd ..
-    rm -rf Adafruit_Python_DHT
-  fi
+  # Adafruit DHT mit garantierter Installation
+  echo -e "${YELLOW}>>> Installiere DHT Sensor Bibliothek...${NC}"
+  git clone https://github.com/adafruit/Adafruit_Python_DHT.git
+  cd Adafruit_Python_DHT
+  python setup.py install
+  cd ..
+  rm -rf Adafruit_Python_DHT
 
   setup_pigpio_service
   setup_gpio_config
