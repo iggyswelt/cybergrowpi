@@ -80,10 +80,10 @@ prepare_system() {
   echo -e "${BLUE}>>> Systemaktualisierung...${NC}"
   export DEBIAN_FRONTEND=noninteractive
   
-  # Grafana Repository-Sicherheit
-  wget -q https://dl.grafana.com/gpg.key || critical_error "Grafana-GPG-Key fehlgeschlagen"
-  sudo apt-key add gpg.key || critical_error "GPG-Key-Import fehlgeschlagen"
-  rm gpg.key
+# Grafana Repository-Sicherheit
+wget -q https://dl.grafana.com/gpg.key || critical_error "Grafana-GPG-Key fehlgeschlagen"
+sudo apt-key add gpg.key || critical_error "GPG-Key-Import fehlgeschlagen"
+rm gpg.key
 
   sudo apt-get update && sudo apt-get full-upgrade -y
   
