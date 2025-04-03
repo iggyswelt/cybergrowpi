@@ -10,7 +10,7 @@ VENV_DIR="$HOME/growbox_venv"
 GRAFANA_VERSION="10.4.1"
 
 # --- Farbcodierung ---
-RED='\033"), $0}' | tee "$LOG_FILE") 2>&1
+RED='\033"), $0}' | tee "$LOG_FILE")
 
 # --- Systemd-Dienst-Vorlagen ---
 PIGPIOD_SERVICE=$(cat <<EOF
