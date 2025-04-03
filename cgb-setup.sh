@@ -113,21 +113,30 @@ prepare_system() {
 
 setup_sensors() {
   echo -e "${BLUE}>>> Sensor-Setup...${NC}"
-  python3 -m venv "$VENV_DIR" || critical_error "Python-VENV fehlgeschlagen"
+  python3 -m venv "$VENV_DIR" |
+| critical_error "Python-VENV fehlgeschlagen"
   source "$VENV_DIR/bin/activate"
 
-  pip install --upgrade pip wheel || critical_error "Pip-Update fehlgeschlagen"
-  pip install pigpio RPi.GPIO smbus2 || critical_error "GPIO-Bibliotheken fehlgeschlagen"
+  pip install --upgrade pip wheel |
+| critical_error "Pip-Update fehlgeschlagen"
+  pip install pigpio RPi.GPIO smbus2 bme680 paho-mqtt |
+| critical_error "GPIO- und Sensor-Bibliotheken fehlgeschlagen"
 
   echo -e "${YELLOW}>>> Installiere DHT-Sensor-Bibliothek...${NC}"
-  git clone https://github.com/adafruit/Adafruit_Python_DHT.git || critical_error "DHT-Clone fehlgeschlagen"
+  git clone https://github.com/adafruit/Adafruit_Python_DHT.git |
+| critical_error "DHT-Clone fehlgeschlagen"
   cd Adafruit_Python_DHT
-  python setup.py install || critical_error "DHT-Installation fehlgeschlagen"
-  cd ..
+  python setup.py install |
+| critical_error "DHT-Installation fehlgeschlagen"
+  cd..
   rm -rf Adafruit_Python_DHT
 
   setup_pigpio_service
   deactivate
+
+  echo -e "${YELLOW}>>> Starte BME680 Sensor Skript im Hintergrund...${NC}"
+  nohup python3 "$HOME/bme680_mqtt.py" &
+  echo -e "${GREEN}>>> BME680 Sensor Skript gestartet. Daten werden an MQTT Topic '${BLUE}growbox/sensors/bme680${GREEN}' gesendet.${NC}"
 }
 
 setup_pigpio_service() {
