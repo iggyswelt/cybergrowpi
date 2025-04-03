@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Growbox Setup v7.7 (Benutzerfreundliche Edition mit Home Assistant)
+# Growbox Setup v7.8 (Benutzerfreundliche Edition mit Home Assistant)
 # Autor: Iggy & Gemini (optimiert für einfache Installation)
 
 # --- Globale Einstellungen ---
@@ -9,6 +9,7 @@ LOG_FILE="$HOME/growbox_setup.log"
 VENV_DIR="$HOME/growbox_venv"
 HA_VENV_DIR="$HOME/homeassistant_venv"
 GRAFANA_VERSION="10.4.1"
+DS18B20_CONFIGURED="$HOME/.ds18b20_configured"
 
 # --- Farbcodierung ---
 RED='\033[0;31m'
@@ -56,7 +57,7 @@ EOF
 
 # --- Funktionen ---
 init() {
-    echo -e "${BLUE}=== Growbox Setup v7.7 Initialisierung ===${NC}" | tee -a "$LOG_FILE"
+    echo -e "${BLUE}=== Growbox Setup v7.8 Initialisierung ===${NC}" | tee -a "$LOG_FILE"
     trap "cleanup" EXIT
     check_root
     hardware_checks
@@ -139,14 +140,18 @@ setup_sensors() {
     echo -e "${YELLOW}>>> Installiere DS18B20 Sensor-Bibliothek...${NC}" | tee -a "$LOG_FILE"
     pip install w1thermsensor --break-system-packages || critical_error "DS18B20-Installation fehlgeschlagen"
 
-    echo -e "${YELLOW}>>> Konfiguriere DS18B20 Kernelmodule...${NC}" | tee -a "$LOG_FILE"
-    sudo sh -c 'echo "dtoverlay=w1-gpio" >> /boot/config.txt'
-    sudo sh -c 'echo "w1-gpio" >> /etc/modules'
-    sudo sh -c 'echo "w1-therm" >> /etc/modules'
-    sudo reboot
-
     setup_pigpio_service
     deactivate
+
+    if [ ! -f "$DS18B20_CONFIGURED" ]; then
+        echo -e "${YELLOW}>>> Konfiguriere DS18B20 Kernelmodule...${NC}" | tee -a "$LOG_FILE"
+        sudo sh -c 'echo "dtoverlay=w1-gpio" >> /boot/config.txt'
+        sudo sh -c 'echo "w1-gpio" >> /etc/modules'
+        sudo sh -c 'echo "w1-therm" >> /etc/modules'
+        touch "$DS18B20_CONFIGURED"
+        echo -e "${YELLOW}>>> DS18B20 Konfiguration abgeschlossen. Bitte führen sie das Script erneut aus um die installation abzuschließen.${NC}"
+        exit 0
+    fi
 
     echo -e "${YELLOW}>>> Starte BME680 Sensor Skript im Hintergrund...${NC}" | tee -a "$LOG_FILE"
     nohup python3 "$HOME/bme680_mqtt.py" &
