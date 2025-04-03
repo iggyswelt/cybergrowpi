@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Ultimate Growbox Setup v7.4 ("Robust Enterprise Edition")
-# Autor: Iggy & DeepSeek (optimiert von Perplexity AI)
+# Growbox Setup v7.5 (Benutzerfreundliche Edition)
+# Autor: Iggy & Gemini (optimiert für einfache Installation)
 
 # --- Globale Einstellungen ---
 set -euo pipefail
-USER="iggy"
+USER="$USER" # Aktuellen Benutzer verwenden
 LOG_FILE="$HOME/growbox_setup.log"
 VENV_DIR="$HOME/growbox_venv"
 GRAFANA_VERSION="10.4.1"
@@ -42,7 +42,7 @@ EOF
 
 # --- Funktionen ---
 init() {
-  echo -e "${BLUE}=== Initialisiere Growbox Setup v7.4 ===${NC}"
+  echo -e "${BLUE}=== Growbox Setup v7.5 Initialisierung ===${NC}"
   trap "cleanup" EXIT
   check_root
   hardware_checks
@@ -57,16 +57,16 @@ cleanup() {
 
 check_root() {
   if [ "$EUID" -eq 0 ]; then
-    echo -e "${RED}Fehler: Nicht als root ausführen!${NC}"
+    echo -e "${RED}Fehler: Nicht als root ausführen! Bitte als normaler Benutzer ausführen.${NC}"
     exit 1
   fi
 }
 
 hardware_checks() {
   echo -e "${YELLOW}>>> Hardware-Checks...${NC}"
-  lsmod | grep -q i2c_dev || critical_error "I2C-Treiber nicht geladen"
-  i2cdetect -y 1 || critical_error "I2C-Bus nicht erreichbar"
-  vcgencmd get_throttled | grep -q "throttled=0x0" || critical_error "Under-voltage erkannt"
+  lsmod | grep -q i2c_dev || critical_error "I2C-Treiber nicht geladen. Bitte 'sudo raspi-config' -> Interface -> I2C aktivieren."
+  i2cdetect -y 1 || critical_error "I2C-Bus nicht erreichbar. Überprüfe die I2C-Verbindung."
+  vcgencmd get_throttled | grep -q "throttled=0x0" || echo -e "${YELLOW}Warnung: Under-voltage erkannt. Überprüfe die Stromversorgung.${NC}"
 }
 
 kill_conflicting_processes() {
@@ -79,22 +79,16 @@ kill_conflicting_processes() {
 prepare_system() {
   echo -e "${BLUE}>>> Systemaktualisierung...${NC}"
   export DEBIAN_FRONTEND=noninteractive
-  
-# Grafana Repository-Sicherheit
-echo -e "${YELLOW}>>> Grafana-Repositorien konfigurieren...${NC}"
-# Alte Schlüssel entfernen
-sudo rm -f /usr/share/keyrings/grafana* /etc/apt/sources.list.d/grafana.list
 
-# Neuen Schlüssel mit moderner Methode installieren
-sudo mkdir -p /usr/share/keyrings
-curl -fsSL https://apt.grafana.com/gpg.key | gpg --dearmor | sudo tee /usr/share/keyrings/grafana.gpg >/dev/null || critical_error "GPG-Key-Import fehlgeschlagen"
-
-# Repository mit expliziter Schlüsselbindung hinzufügen
-echo "deb [signed-by=/usr/share/keyrings/grafana.gpg] https://apt.grafana.com stable main" | sudo tee /etc/apt/sources.list.d/grafana.list || critical_error "Repository-Konfiguration fehlgeschlagen"
-
+  # Grafana Repository-Sicherheit
+  echo -e "${YELLOW}>>> Grafana-Repositorien konfigurieren...${NC}"
+  sudo rm -f /usr/share/keyrings/grafana* /etc/apt/sources.list.d/grafana.list
+  sudo mkdir -p /usr/share/keyrings
+  curl -fsSL https://apt.grafana.com/gpg.key | gpg --dearmor | sudo tee /usr/share/keyrings/grafana.gpg >/dev/null || critical_error "GPG-Key-Import fehlgeschlagen"
+  echo "deb [signed-by=/usr/share/keyrings/grafana.gpg] https://apt.grafana.com stable main" | sudo tee /etc/apt/sources.list.d/grafana.list || critical_error "Repository-Konfiguration fehlgeschlagen"
 
   sudo apt-get update && sudo apt-get full-upgrade -y
-  
+
   echo -e "${YELLOW}>>> Deaktiviere Serial-Login...${NC}"
   sudo raspi-config nonint do_serial 1
   sudo systemctl mask serial-getty@ttyAMA0.service
@@ -121,9 +115,8 @@ setup_sensors() {
   echo -e "${BLUE}>>> Sensor-Setup...${NC}"
   python3 -m venv "$VENV_DIR" || critical_error "Python-VENV fehlgeschlagen"
   source "$VENV_DIR/bin/activate"
-  
+
   pip install --upgrade pip wheel || critical_error "Pip-Update fehlgeschlagen"
-  
   pip install pigpio RPi.GPIO smbus2 || critical_error "GPIO-Bibliotheken fehlgeschlagen"
 
   echo -e "${YELLOW}>>> Installiere DHT-Sensor-Bibliothek...${NC}"
@@ -134,7 +127,6 @@ setup_sensors() {
   rm -rf Adafruit_Python_DHT
 
   setup_pigpio_service
-  setup_gpio_config
   deactivate
 }
 
@@ -143,7 +135,7 @@ setup_pigpio_service() {
   echo "$PIGPIOD_SERVICE" | sudo tee /etc/systemd/system/pigpiod.service >/dev/null
   sudo chmod 644 /etc/systemd/system/pigpiod.service
   sudo chown root:root /etc/systemd/system/pigpiod.service
-  
+
   sudo systemctl daemon-reload
   sudo systemctl enable --now pigpiod
   sleep 3
@@ -155,14 +147,14 @@ setup_camera() {
   sudo rm -rf /opt/mjpg-streamer
   sudo mkdir -p /opt/mjpg-streamer
   sudo chown "$USER:$USER" /opt/mjpg-streamer
-  
+
   git clone https://github.com/jacksonliam/mjpg-streamer.git /opt/mjpg-streamer || critical_error "MJPG-Streamer-Clone fehlgeschlagen"
   cd /opt/mjpg-streamer/mjpg-streamer-experimental
-  
+
   make CMAKE_BUILD_TYPE=Release \
     CFLAGS+="-O2 -fPIC" \
     LDFLAGS+="-Wl,--no-as-needed -ldl" || critical_error "Kamera-Kompilierung fehlgeschlagen"
-  
+
   sudo make install || critical_error "Kamera-Installation fehlgeschlagen"
   cd
 
@@ -176,8 +168,8 @@ Type=simple
 User=$USER
 Environment="LD_LIBRARY_PATH=/usr/local/lib"
 ExecStart=/usr/local/bin/mjpg_streamer \
-  -i "input_uvc.so -d /dev/video0 -r 1280x720 -f 15 -n" \
-  -o "output_http.so -p 8080 -w /usr/local/share/mjpg-streamer/www"
+    -i "input_uvc.so -d /dev/video0 -r 1280x720 -f 15 -n" \
+    -o "output_http.so -p 8080 -w /usr/local/share/mjpg-streamer/www"
 Restart=always
 RestartSec=5s
 TimeoutStartSec=30
@@ -199,14 +191,13 @@ main() {
   prepare_system
   setup_sensors
   setup_camera
-  final_check
   
   echo -e "${GREEN}\n=== Installation erfolgreich! ===${NC}"
   ip=$(hostname -I | awk '{print $1}')
   echo -e "Zugangslinks:"
-  echo -e "Grafana:        ${BLUE}http://$ip:3000${NC} (admin/admin)"
-  echo -e "Kamera-Stream:  ${BLUE}http://$ip:8080${NC}"
-  echo -e "\nDiagnose: ${GREEN}growbox-diag${NC} oder ${GREEN}journalctl -u growcam.service${NC}"
+  echo -e "Grafana:      ${BLUE}http://$ip:3000${NC} (admin/admin)"
+  echo -e "Kamera-Stream: ${BLUE}http://$ip:8080${NC}"
+  echo -e "\nDiagnose: ${GREEN}journalctl -u growcam.service${NC}"
 }
 
 critical_error() {
