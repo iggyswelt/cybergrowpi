@@ -1,127 +1,86 @@
-#!/bin/bash
+#!/usr/bin/env bash
+# Growbox Diagnose-Skript v1.0
+# Autor: Iggy & Gemini
 
-# growbox-control.sh - Start-/Überwachungs-Script für die Growbox
-# Version 1.1 (Erweiterte Diagnose)
-# Autor: Iggy
+# --- Globale Einstellungen ---
+LOG_FILE="$HOME/growbox_diagnose.log"
 
-# Pfade und Konfiguration
-LOG_FILE="/var/log/growbox_control.log"
-SERVICES=("growcam.service" "home-assistant@homeassistant" "mosquitto" "grafana-server" "influxdb")
-PYTHON_SENSOR_SCRIPT="$HOME/bme680_mqtt.py"
-INFLUXDB_HOST="localhost"
-INFLUXDB_PORT="8086" # Default InfluxDB port
+# --- Farbcodierung ---
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m'
 
-# Farben
-RED='\033${NC} $service ist aktiv"
-        return 0
-    else
-        log "${RED}${NC} $service ist inaktiv - starte neu..."
-        sudo systemctl restart "$service"
-        if [ $? -eq 0 ]; then
-            log "${GREEN}[OK]${NC} $service erfolgreich gestartet"
-            return 1
-        else
-            log "${RED}${NC} $service konnte nicht gestartet werden"
-            return 2
-        fi
-    fi
+# --- Notfallprotokollierung ---
+exec > >(awk '{print strftime("[%Y-%m-%d %H:%M:%S]"), $0}' | tee "$LOG_FILE") 2>&1
+
+# --- Funktionen ---
+check_system() {
+  echo -e "${BLUE}=== Systemüberprüfung ===${NC}"
+  echo -e "${YELLOW}>>> Betriebssystem: $(lsb_release -ds 2>/dev/null || uname -mrs)${NC}"
+  echo -e "${YELLOW}>>> Kernel: $(uname -r)${NC}"
+  echo -e "${YELLOW}>>> CPU-Temperatur: $(vcgencmd measure_temp 2>/dev/null || echo "Nicht verfügbar")${NC}"
+  echo -e "${YELLOW}>>> Arbeitsspeicher: $(free -h | grep Mem)${NC}"
+  echo -e "${YELLOW}>>> Festplattenbelegung: $(df -h)${NC}"
+  echo -e "${YELLOW}>>> Netzwerk-IP: $(hostname -I)${NC}"
 }
 
-check_camera() {
-    if [ -e "/dev/video0" ]; then
-        log "${GREEN}[OK]${NC} Kamera /dev/video0 erkannt"
-    else
-        log "${RED}${NC} Kamera /dev/video0 nicht gefunden!"
-        return 1
-    fi
+check_services() {
+  echo -e "${BLUE}=== Dienstüberprüfung ===${NC}"
+  check_service "pigpiod"
+  check_service "growcam.service"
+  check_service "grafana-server"
+  check_service "mosquitto"
+  check_service "influxdb"
+  check_service "mariadb"
+  check_service "nginx"
 }
 
-check_disk_space() {
-    local threshold=90
-    local usage=$(df -h / | awk 'NR==2 {print $5}' | tr -d '%')
-    if [ "$usage" -ge "$threshold" ]; then
-        log "${YELLOW}${NC} Festplattenauslastung: $usage% - Aufräumen empfohlen!"
-    else
-        log "${GREEN}[OK]${NC} Festplattenauslastung: $usage%"
-    fi
+check_service() {
+  local service_name="$1"
+  local status=$(sudo systemctl is-active "$service_name" 2>/dev/null)
+  if [ "$status" = "active" ]; then
+    echo -e "${GREEN}>>> $service_name: Aktiv${NC}"
+  else
+    echo -e "${RED}>>> $service_name: Inaktiv${NC}"
+    sudo systemctl status "$service_name"
+  fi
 }
 
-check_network() {
-    if ping -c 1 google.com &> /dev/null; then
-        log "${GREEN}[OK]${NC} Netzwerkverbindung vorhanden"
-    else
-        log "${YELLOW}${NC} Keine Internetverbindung"
-    fi
+check_hardware() {
+  echo -e "${BLUE}=== Hardwareüberprüfung ===${NC}"
+  lsmod | grep -q i2c_dev && echo -e "${GREEN}>>> I2C-Treiber: Geladen${NC}" || echo -e "${RED}>>> I2C-Treiber: Nicht geladen${NC}"
+  i2cdetect -y 1 && echo -e "${GREEN}>>> I2C-Bus: Erreichbar${NC}" || echo -e "${RED}>>> I2C-Bus: Nicht erreichbar${NC}"
+  lsmod | grep -q uvcvideo && echo -e "${GREEN}>>> Kamera-Treiber: Geladen${NC}" || echo -e "${RED}>>> Kamera-Treiber: Nicht geladen${NC}"
+  vcgencmd get_camera && echo -e "${GREEN}>>> Kamera: Erkannt${NC}" || echo -e "${RED}>>> Kamera: Nicht erkannt${NC}"
+  vcgencmd get_throttled | grep -q "throttled=0x0" && echo -e "${GREEN}>>> Under-voltage: Nicht erkannt${NC}" || echo -e "${YELLOW}>>> Under-voltage: Erkannt${NC}"
 }
 
-check_python_sensor_script() {
-    if; then
-        if pgrep -f "$(basename "$PYTHON_SENSOR_SCRIPT")" > /dev/null; then
-            log "${GREEN}[OK]${NC} Python Sensor Skript läuft (${PYTHON_SENSOR_SCRIPT})"
-        else
-            log "${YELLOW}${NC} Python Sensor Skript scheint nicht zu laufen (${PYTHON_SENSOR_SCRIPT})"
-        fi
-    else
-        log "${RED}${NC} Python Sensor Skript nicht gefunden (${PYTHON_SENSOR_SCRIPT})"
-    fi
+check_permissions() {
+  echo -e "${BLUE}=== Berechtigungsüberprüfung ===${NC}"
+  ls -l /dev/video0
+  ls -l /dev/i2c-1
 }
 
-check_influxdb() {
-    if systemctl is-active --quiet influxdb; then
-        log "${GREEN}[OK]${NC} InfluxDB Dienst ist aktiv"
-        # Versuche eine einfache Abfrage (erfordert influxdb-cli installiert)
-        if command -v influx >/dev/null 2>&1; then
-            influx -host "$INFLUXDB_HOST" -port "$INFLUXDB_PORT" -execute 'SHOW DATABASES' &> /dev/null
-            if [ $? -eq 0 ]; then
-                log "${GREEN}[OK]${NC} InfluxDB reagiert auf Anfragen"
-            else
-                log "${YELLOW}${NC} InfluxDB scheint nicht auf Anfragen zu reagieren"
-            fi
-        else
-            log "${YELLOW}${NC} InfluxDB CLI (influx) nicht gefunden. Für detailliertere Prüfung installieren."
-        fi
-    else
-        log "${RED}${NC} InfluxDB Dienst ist inaktiv"
-    fi
+check_logs() {
+  echo -e "${BLUE}=== Logdateien ===${NC}"
+  echo -e "${YELLOW}>>> Growbox Setup Log: $HOME/growbox_setup.log${NC}"
+  echo -e "${YELLOW}>>> Growbox Diagnose Log: $LOG_FILE${NC}"
+  echo -e "${YELLOW}>>> Growcam Service Log: journalctl -u growcam.service${NC}"
+  echo -e "${YELLOW}>>> Grafana Service Log: journalctl -u grafana-server${NC}"
 }
 
-# Hauptroutine
+# --- Hauptprogramm ---
 main() {
-    log "=== Starte Erweiterte Growbox-Systemprüfung ==="
-    
-    # Dienste prüfen
-    for service in "${SERVICES[@]}"; do
-        check_service "$service"
-    done
-    
-    # Hardware prüfen
-    check_camera
-    check_disk_space
-    check_network
-    
-    # Python Sensor Skript prüfen
-    check_python_sensor_script
-    
-    # InfluxDB prüfen
-    check_influxdb
-    
-    # Spezialcheck für mjpg-streamer
-    if pgrep mjpg_streamer > /dev/null; then
-        log "${GREEN}[OK]${NC} mjpg_streamer Prozess läuft"
-    else
-        log "${RED}${NC} mjpg_streamer nicht aktiv - starte Kamera-Service..."
-        sudo systemctl restart growcam.service
-    fi
-    
-    # Home Assistant API Check
-    if curl -s http://localhost:8123/api/ | grep -q "API running"; then
-        log "${GREEN}[OK]${NC} Home Assistant API erreichbar"
-    else
-        log "${YELLOW}${NC} Home Assistant API nicht erreichbar"
-    fi
-    
-    log "=== Erweiterte Prüfung abgeschlossen ==="
+  echo -e "${BLUE}=== Growbox Diagnose ===${NC}"
+  check_system
+  check_services
+  check_hardware
+  check_permissions
+  check_logs
+
+  echo -e "${GREEN}\n=== Diagnose abgeschlossen! Details in: $LOG_FILE ===${NC}"
 }
 
-# Ausführung
 main
