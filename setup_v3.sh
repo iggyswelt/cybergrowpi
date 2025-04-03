@@ -87,7 +87,7 @@ prepare_system() {
   sudo apt-get update && sudo apt-get full-upgrade -y
 
   echo -e "${YELLOW}>>> Deaktiviere Serial-Login...${NC}" | tee -a "$LOG_FILE"
-  sudo raspi-config nonint do_serial 1
+  sudo raspi-config nonint do_serial 1 # Abfrage vermeiden
   sudo systemctl mask serial-getty@ttyAMA0.service
 
   echo -e "${YELLOW}>>> Installiere Grafana ${GRAFANA_VERSION}...${NC}" | tee -a "$LOG_FILE"
