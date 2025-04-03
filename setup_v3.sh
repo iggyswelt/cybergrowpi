@@ -106,7 +106,7 @@ prepare_system() {
   sudo apt-get install -y \
     git python3 python3-venv python3-pip \
     i2c-tools libgpiod2 libjpeg62-turbo-dev \
-    mosquitto influxdb mariadb-server pigpio \
+    mosquitto influxdb influxdb-cli mariadb-server pigpio \
     libatlas-base-dev libopenjp2-7 libtiff6 \
     lm-sensors v4l-utils fswebcam ffmpeg \
     nginx npm libffi-dev libssl-dev cmake
