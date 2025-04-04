@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Growbox Setup v7.8 (Benutzerfreundliche Edition mit Home Assistant)
-# Autor: Iggy & Gemini (optimiert für einfache Installation)
+# Growbox Setup v7.9 (Stable Edition mit Home Assistant)
+# Autor: Iggy & Gemini (optimiert für Plug & Play Installation)
 
 # --- Globale Einstellungen ---
 set -euo pipefail
@@ -42,13 +42,16 @@ EOF
 HA_SERVICE=$(cat <<EOF
 [Unit]
 Description=Home Assistant Core
-After=network.target
+After=network.target pigpiod.service mosquitto.service influxdb.service mariadb.service
 
 [Service]
 Type=simple
 User=$USER
+WorkingDirectory=$HOME
+Environment="PATH=$HA_VENV_DIR/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 ExecStart=$HA_VENV_DIR/bin/hass -c "$HOME/.homeassistant"
 Restart=on-failure
+RestartSec=5s
 
 [Install]
 WantedBy=multi-user.target
@@ -57,7 +60,7 @@ EOF
 
 # --- Funktionen ---
 init() {
-    echo -e "${BLUE}=== Growbox Setup v7.8 Initialisierung ===${NC}" | tee -a "$LOG_FILE"
+    echo -e "${BLUE}=== Growbox Setup v7.9 Initialisierung ===${NC}" | tee -a "$LOG_FILE"
     trap "cleanup" EXIT
     check_root
     hardware_checks
@@ -79,9 +82,22 @@ check_root() {
 
 hardware_checks() {
     echo -e "${YELLOW}>>> Hardware-Checks...${NC}" | tee -a "$LOG_FILE"
-    lsmod | grep -q i2c_dev || critical_error "I2C-Treiber nicht geladen. Bitte 'sudo raspi-config' -> Interface -> I2C aktivieren."
+    
+    # I2C aktivieren falls nicht vorhanden
+    if ! lsmod | grep -q i2c_dev; then
+        echo -e "${YELLOW}>>> I2C nicht aktiviert - aktiviere jetzt...${NC}" | tee -a "$LOG_FILE"
+        sudo raspi-config nonint do_i2c 0 || critical_error "I2C-Aktivierung fehlgeschlagen"
+        sudo modprobe i2c-dev || critical_error "I2C-Treiber laden fehlgeschlagen"
+    fi
+    
     i2cdetect -y 1 || critical_error "I2C-Bus nicht erreichbar. Überprüfe die I2C-Verbindung."
     vcgencmd get_throttled | grep -q "throttled=0x0" || echo -e "${YELLOW}Warnung: Under-voltage erkannt. Überprüfe die Stromversorgung.${NC}" | tee -a "$LOG_FILE"
+    
+    # Kamera aktivieren falls nicht vorhanden
+    if ! vcgencmd get_camera | grep -q "detected=1"; then
+        echo -e "${YELLOW}>>> Kamera nicht aktiviert - aktiviere jetzt...${NC}" | tee -a "$LOG_FILE"
+        sudo raspi-config nonint do_camera 0 || critical_error "Kamera-Aktivierung fehlgeschlagen"
+    fi
 }
 
 kill_conflicting_processes() {
@@ -95,6 +111,10 @@ prepare_system() {
     echo -e "${BLUE}>>> Systemaktualisierung...${NC}" | tee -a "$LOG_FILE"
     export DEBIAN_FRONTEND=noninteractive
 
+    # Basis-Pakete installieren
+    sudo apt-get update && sudo apt-get upgrade -y
+    sudo apt-get install -y curl wget git build-essential cmake
+
     # Grafana Repository-Sicherheit
     echo -e "${YELLOW}>>> Grafana-Repositorien konfigurieren...${NC}" | tee -a "$LOG_FILE"
     sudo rm -f /usr/share/keyrings/grafana* /etc/apt/sources.list.d/grafana.list
@@ -102,11 +122,7 @@ prepare_system() {
     curl -fsSL https://apt.grafana.com/gpg.key | gpg --dearmor | sudo tee /usr/share/keyrings/grafana.gpg >/dev/null || critical_error "GPG-Key-Import fehlgeschlagen"
     echo "deb [signed-by=/usr/share/keyrings/grafana.gpg] https://apt.grafana.com stable main" | sudo tee /etc/apt/sources.list.d/grafana.list || critical_error "Repository-Konfiguration fehlgeschlagen"
 
-    sudo apt-get update && sudo apt-get full-upgrade -y
-
-    echo -e "${YELLOW}>>> Deaktiviere Serial-Login...${NC}" | tee -a "$LOG_FILE"
-    sudo raspi-config nonint do_serial 1 # Abfrage vermeiden
-    sudo systemctl mask serial-getty@ttyAMA0.service
+    sudo apt-get update
 
     echo -e "${YELLOW}>>> Installiere Grafana ${GRAFANA_VERSION}...${NC}" | tee -a "$LOG_FILE"
     sudo apt-get install -y adduser libfontconfig1
@@ -116,14 +132,21 @@ prepare_system() {
 
     echo -e "${YELLOW}>>> Installiere Systempakete...${NC}" | tee -a "$LOG_FILE"
     sudo apt-get install -y \
-        git python3 python3-venv python3-pip \
+        python3 python3-venv python3-pip python3-dev \
         i2c-tools libgpiod2 libjpeg62-turbo-dev \
-        mosquitto influxdb influxdb-cli mariadb-server pigpio \
+        mosquitto mosquitto-clients influxdb influxdb-cli mariadb-server pigpio \
         libatlas-base-dev libopenjp2-7 libtiff6 \
         lm-sensors v4l-utils fswebcam ffmpeg \
-        nginx npm libffi-dev libssl-dev cmake
+        nginx npm libffi-dev libssl-dev cmake \
+        libcamera-dev libcamera-apps
 
-    sudo usermod -a -G video,gpio,i2c "$USER"
+    # Benutzer zu notwendigen Gruppen hinzufügen
+    sudo usermod -a -G video,gpio,i2c,dialout,plugdev "$USER"
+
+    # Serial-Login deaktivieren
+    echo -e "${YELLOW}>>> Deaktiviere Serial-Login...${NC}" | tee -a "$LOG_FILE"
+    sudo raspi-config nonint do_serial 1
+    sudo systemctl mask serial-getty@ttyAMA0.service
 }
 
 setup_sensors() {
@@ -145,11 +168,11 @@ setup_sensors() {
 
     if [ ! -f "$DS18B20_CONFIGURED" ]; then
         echo -e "${YELLOW}>>> Konfiguriere DS18B20 Kernelmodule...${NC}" | tee -a "$LOG_FILE"
-        sudo sh -c 'echo "dtoverlay=w1-gpio" >> /boot/config.txt'
-        sudo sh -c 'echo "w1-gpio" >> /etc/modules'
-        sudo sh -c 'echo "w1-therm" >> /etc/modules'
+        sudo bash -c 'echo "dtoverlay=w1-gpio" >> /boot/config.txt'
+        sudo bash -c 'echo "w1-gpio" >> /etc/modules'
+        sudo bash -c 'echo "w1-therm" >> /etc/modules'
         touch "$DS18B20_CONFIGURED"
-        echo -e "${YELLOW}>>> DS18B20 Konfiguration abgeschlossen. Bitte führen sie das Script erneut aus um die installation abzuschließen.${NC}"
+        echo -e "${YELLOW}>>> DS18B20 Konfiguration abgeschlossen. Bitte führen Sie das Script erneut aus um die installation abzuschließen.${NC}"
         exit 0
     fi
 
@@ -179,6 +202,9 @@ setup_camera() {
     git clone https://github.com/jacksonliam/mjpg-streamer.git /opt/mjpg-streamer || critical_error "MJPG-Streamer-Clone fehlgeschlagen"
     cd /opt/mjpg-streamer/mjpg-streamer-experimental
 
+    # Zusätzliche Abhängigkeiten für die Kamera
+    sudo apt-get install -y libjpeg-dev libjpeg62-turbo-dev cmake
+
     make CMAKE_BUILD_TYPE=Release \
         CFLAGS+="-O2 -fPIC" \
         LDFLAGS+="-Wl,--no-as-needed -ldl" || critical_error "Kamera-Kompilierung fehlgeschlagen"
@@ -189,7 +215,8 @@ setup_camera() {
     sudo tee /etc/systemd/system/growcam.service >/dev/null <<EOF
 [Unit]
 Description=Growbox Camera Service
-After=network.target
+After=network.target pigpiod.service
+Requires=pigpiod.service
 
 [Service]
 Type=simple
@@ -213,13 +240,34 @@ EOF
     sudo systemctl is-active growcam.service || critical_error "Kameradienst fehlgeschlagen"
 }
 
+setup_database_services() {
+    echo -e "${BLUE}>>> Datenbankdienste konfigurieren...${NC}" | tee -a "$LOG_FILE"
+    
+    # InfluxDB konfigurieren
+    sudo systemctl enable --now influxdb
+    sudo systemctl is-active influxdb || critical_error "InfluxDB-Dienst fehlgeschlagen"
+    
+    # MariaDB konfigurieren
+    sudo systemctl enable --now mariadb
+    sudo systemctl is-active mariadb || critical_error "MariaDB-Dienst fehlgeschlagen"
+    sudo mysql -e "CREATE DATABASE IF NOT EXISTS growbox;"
+    
+    # Mosquitto konfigurieren
+    sudo systemctl enable --now mosquitto
+    sudo systemctl is-active mosquitto || critical_error "Mosquitto-Dienst fehlgeschlagen"
+    
+    # Grafana konfigurieren
+    sudo systemctl enable --now grafana-server
+    sudo systemctl is-active grafana-server || critical_error "Grafana-Dienst fehlgeschlagen"
+}
+
 setup_homeassistant() {
     echo -e "${BLUE}>>> Home Assistant Installation...${NC}" | tee -a "$LOG_FILE"
     python3 -m venv "$HA_VENV_DIR" || critical_error "Home Assistant VENV fehlgeschlagen"
     source "$HA_VENV_DIR/bin/activate"
 
     pip install --upgrade pip wheel || critical_error "Pip-Update fehlgeschlagen"
-    pip install homeassistant || critical_error "Home Assistant Installation fehlgeschlagen"
+    pip install homeassistant sqlalchemy || critical_error "Home Assistant Installation fehlgeschlagen"
 
     deactivate
 
@@ -239,6 +287,7 @@ main() {
     prepare_system
     setup_sensors
     setup_camera
+    setup_database_services
     setup_homeassistant
 
     echo -e "${GREEN}\n=== Installation erfolgreich! ===${NC}" | tee -a "$LOG_FILE"
@@ -247,8 +296,15 @@ main() {
     echo -e "Grafana:      ${BLUE}http://$ip:3000${NC} (admin/admin)" | tee -a "$LOG_FILE"
     echo -e "Kamera-Stream: ${BLUE}http://$ip:8080${NC}" | tee -a "$LOG_FILE"
     echo -e "Home Assistant: ${BLUE}http://$ip:8123${NC}" | tee -a "$LOG_FILE"
-    echo -e "\nDiagnose: ${GREEN}journalctl -u growcam.service${NC}" | tee -a "$LOG_FILE"
-    echo -e "Diagnose: ${GREEN}journalctl -u home-assistant.service${NC}" | tee -a "$LOG_FILE"
+    echo -e "MQTT Broker:   ${BLUE}mqtt://$ip:1883${NC}" | tee -a "$LOG_FILE"
+    echo -e "\nDiagnose Befehle:" | tee -a "$LOG_FILE"
+    echo -e "${GREEN}journalctl -u growcam.service${NC}" | tee -a "$LOG_FILE"
+    echo -e "${GREEN}journalctl -u home-assistant.service${NC}" | tee -a "$LOG_FILE"
+    echo -e "${GREEN}journalctl -u grafana-server${NC}" | tee -a "$LOG_FILE"
+    echo -e "${GREEN}journalctl -u influxdb${NC}" | tee -a "$LOG_FILE"
+    
+    # Neustart empfehlen
+    echo -e "${YELLOW}\nFertig! Ein Neustart wird empfohlen, um alle Änderungen zu übernehmen.${NC}" | tee -a "$LOG_FILE"
 }
 
 critical_error() {
