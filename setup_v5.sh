@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Growbox Setup v1.3 (Idiotensichere Edition für Webcam und Sensoren)
+# Growbox Setup v1.4 (Idiotensichere Edition für Webcam und Sensoren)
 # Autor: Grok (xAI) - Optimiert für Home Assistant, BME680, AM2301 und Webcam
 
 set -euo pipefail
@@ -62,7 +62,7 @@ update_system() {
 }
 install_dependencies() { 
     log "${BLUE}>> Installiere Abhängigkeiten...${NC}"
-    sudo apt-get install -y python3 python3-venv python3-pip git i2c-tools libjpeg-dev cmake mosquitto mosquitto-clients
+    sudo apt-get install -y python3 python3-venv python3-pip git i2c-tools libjpeg-dev cmake mosquitto mosquitto-clients libgpiod2
     sudo usermod -a -G i2c,video "$USER"
     log "${GREEN}Abhängigkeiten installiert${NC}"
 }
@@ -71,25 +71,25 @@ setup_sensors() {
     python3 -m venv "$SENSOR_VENV_DIR"
     source "$SENSOR_VENV_DIR/bin/activate"
     pip install --upgrade pip
-    pip install smbus2 bme680 paho-mqtt || { log "${RED}Fehler: Sensor-Bibliotheken fehlgeschlagen${NC}"; exit 1; }
-    pip install Adafruit_DHT --force-pi || { log "${RED}Fehler: Adafruit_DHT Installation fehlgeschlagen${NC}"; exit 1; }
+    pip install smbus2 bme680 paho-mqtt adafruit-circuitpython-dht || { log "${RED}Fehler: Sensor-Bibliotheken fehlgeschlagen${NC}"; exit 1; }
     deactivate
     cat <<EOF > "$HOME/sensor_mqtt.py"
 #!/usr/bin/env python3
 import time
 import board
 import adafruit_bme680
-import Adafruit_DHT
+import adafruit_dht
 import paho.mqtt.client as mqtt
 
-DHT_PIN = 4
-DHT_SENSOR = Adafruit_DHT.AM2301
+DHT_PIN = board.D4  # GPIO4
+DHT_SENSOR = adafruit_dht.DHT22
 MQTT_BROKER = "localhost"
 MQTT_TOPIC_BME = "growbox/sensors/bme680"
 MQTT_TOPIC_DHT = "growbox/sensors/am2301"
 
 i2c = board.I2C()
 bme680 = adafruit_bme680.Adafruit_BME680_I2C(i2c)
+dht = DHT_SENSOR(DHT_PIN)
 client = mqtt.Client()
 client.connect(MQTT_BROKER, 1883, 60)
 
@@ -97,9 +97,13 @@ while True:
     temp = bme680.temperature
     hum = bme680.humidity
     client.publish(MQTT_TOPIC_BME, f"temp={temp},hum={hum}")
-    humidity, temperature = Adafruit_DHT.read_retry(DHT_SENSOR, DHT_PIN)
-    if humidity is not None and temperature is not None:
-        client.publish(MQTT_TOPIC_DHT, f"temp={temperature},hum={humidity}")
+    try:
+        dht_temp = dht.temperature
+        dht_hum = dht.humidity
+        if dht_temp is not None and dht_hum is not None:
+            client.publish(MQTT_TOPIC_DHT, f"temp={dht_temp},hum={dht_hum}")
+    except RuntimeError:
+        pass  # Ignoriere temporäre DHT-Lesefehler
     time.sleep(60)
 EOF
     chmod +x "$HOME/sensor_mqtt.py"
@@ -123,41 +127,4 @@ EOF
 setup_webcam() {
     log "${BLUE}>> Webcam-Setup...${NC}"
     git clone https://github.com/jacksonliam/mjpg-streamer.git "$HOME/mjpg-streamer" || { log "${RED}Fehler: MJPG-Streamer klonen fehlgeschlagen${NC}"; exit 1; }
-    cd "$HOME/mjpg-streamer/mjpg-streamer-experimental"
-    make && sudo make install || { log "${RED}Fehler: Webcam-Kompilierung fehlgeschlagen${NC}"; exit 1; }
-    cd "$HOME"
-    echo "$CAM_SERVICE" | sudo tee /etc/systemd/system/growcam.service
-    sudo systemctl daemon-reload
-    sudo systemctl enable --now growcam.service
-    log "${GREEN}Webcam-Setup abgeschlossen${NC}"
-}
-setup_homeassistant() {
-    log "${BLUE}>> Home Assistant Setup...${NC}"
-    python3 -m venv "$HA_VENV_DIR"
-    source "$HA_VENV_DIR/bin/activate"
-    pip install --upgrade pip
-    pip install homeassistant || { log "${RED}Fehler: Home Assistant Installation fehlgeschlagen${NC}"; exit 1; }
-    deactivate
-    echo "$HA_SERVICE" | sudo tee /etc/systemd/system/home-assistant.service
-    sudo systemctl daemon-reload
-    sudo systemctl enable --now home-assistant.service
-    log "${GREEN}Home Assistant Setup abgeschlossen${NC}"
-}
-
-main() {
-    log "${GREEN}=== Growbox Setup v1.3 Start ===${NC}"
-    check_root
-    enable_i2c
-    update_system
-    install_dependencies
-    setup_sensors
-    setup_webcam
-    setup_homeassistant
-    ip=$(hostname -I | awk '{print $1}')
-    log "${GREEN}=== Installation abgeschlossen! ===${NC}"
-    log "Home Assistant: ${BLUE}http://$ip:8123${NC}"
-    log "Webcam-Stream: ${BLUE}http://$ip:8080${NC}"
-    log "Sensor-Daten via MQTT: growbox/sensors/bme680 und growbox/sensors/am2301"
-}
-
-main
+    cd
