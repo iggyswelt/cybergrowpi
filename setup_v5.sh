@@ -127,4 +127,41 @@ EOF
 setup_webcam() {
     log "${BLUE}>> Webcam-Setup...${NC}"
     git clone https://github.com/jacksonliam/mjpg-streamer.git "$HOME/mjpg-streamer" || { log "${RED}Fehler: MJPG-Streamer klonen fehlgeschlagen${NC}"; exit 1; }
-    cd
+    cd "$HOME/mjpg-streamer/mjpg-streamer-experimental"
+    make && sudo make install || { log "${RED}Fehler: Webcam-Kompilierung fehlgeschlagen${NC}"; exit 1; }
+    cd "$HOME"
+    echo "$CAM_SERVICE" | sudo tee /etc/systemd/system/growcam.service
+    sudo systemctl daemon-reload
+    sudo systemctl enable --now growcam.service
+    log "${GREEN}Webcam-Setup abgeschlossen${NC}"
+}
+setup_homeassistant() {
+    log "${BLUE}>> Home Assistant Setup...${NC}"
+    python3 -m venv "$HA_VENV_DIR"
+    source "$HA_VENV_DIR/bin/activate"
+    pip install --upgrade pip
+    pip install homeassistant || { log "${RED}Fehler: Home Assistant Installation fehlgeschlagen${NC}"; exit 1; }
+    deactivate
+    echo "$HA_SERVICE" | sudo tee /etc/systemd/system/home-assistant.service
+    sudo systemctl daemon-reload
+    sudo systemctl enable --now home-assistant.service
+    log "${GREEN}Home Assistant Setup abgeschlossen${NC}"
+}
+
+main() {
+    log "${GREEN}=== Growbox Setup v1.4 Start ===${NC}"
+    check_root
+    enable_i2c
+    update_system
+    install_dependencies
+    setup_sensors
+    setup_webcam
+    setup_homeassistant
+    ip=$(hostname -I | awk '{print $1}')
+    log "${GREEN}=== Installation abgeschlossen! ===${NC}"
+    log "Home Assistant: ${BLUE}http://$ip:8123${NC}"
+    log "Webcam-Stream: ${BLUE}http://$ip:8080${NC}"
+    log "Sensor-Daten via MQTT: growbox/sensors/bme680 und growbox/sensors/am2301"
+}
+
+main
