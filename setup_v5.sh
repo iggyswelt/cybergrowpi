@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Growbox Setup v1.2 (Idiotensichere Edition für Webcam und Sensoren)
+# Growbox Setup v1.3 (Idiotensichere Edition für Webcam und Sensoren)
 # Autor: Grok (xAI) - Optimiert für Home Assistant, BME680, AM2301 und Webcam
 
 set -euo pipefail
@@ -71,7 +71,8 @@ setup_sensors() {
     python3 -m venv "$SENSOR_VENV_DIR"
     source "$SENSOR_VENV_DIR/bin/activate"
     pip install --upgrade pip
-    pip install smbus2 bme680 Adafruit_DHT paho-mqtt || { log "${RED}Fehler: Sensor-Bibliotheken fehlgeschlagen${NC}"; exit 1; }
+    pip install smbus2 bme680 paho-mqtt || { log "${RED}Fehler: Sensor-Bibliotheken fehlgeschlagen${NC}"; exit 1; }
+    pip install Adafruit_DHT --force-pi || { log "${RED}Fehler: Adafruit_DHT Installation fehlgeschlagen${NC}"; exit 1; }
     deactivate
     cat <<EOF > "$HOME/sensor_mqtt.py"
 #!/usr/bin/env python3
@@ -144,7 +145,7 @@ setup_homeassistant() {
 }
 
 main() {
-    log "${GREEN}=== Growbox Setup v1.2 Start ===${NC}"
+    log "${GREEN}=== Growbox Setup v1.3 Start ===${NC}"
     check_root
     enable_i2c
     update_system
