@@ -1,0 +1,144 @@
+- id: heizung_einschalten
+  alias: "HEIZUNG: Einschalten, wenn Temperatur zu niedrig"
+  trigger:
+    - platform: numeric_state
+      entity_id: sensor.grow_hydro01_temperatur
+      below: 22 # Anpassen: Temperatur, bei der die Heizung einschalten soll
+  action:
+    - service: switch.turn_on
+      target:
+        entity_id: switch.grow_heizung01
+    - service: persistent_notification.create
+      data:
+        title: Growbox
+        message: "Heizung EINGESCHALTET, Temperatur zu niedrig!"
+  mode: single
+
+- id: heizung_ausschalten
+  alias: "HEIZUNG: Ausschalten, wenn Temperatur erreicht"
+  trigger:
+    - platform: numeric_state
+      entity_id: sensor.grow_hydro01_temperatur
+      above: 26 # Anpassen: Temperatur, bei der die Heizung ausschalten soll
+  action:
+    - service: switch.turn_off
+      target:
+        entity_id: switch.grow_heizung01
+    - service: persistent_notification.create
+      data:
+        title: Growbox
+        message: "Heizung AUSGESCHALTET, Temperatur erreicht!"
+  mode: single
+
+- id: grow_abluft_an
+  alias: 'ABLUFT: EIN (>77% LF)'
+  trigger:
+    - platform: numeric_state
+      entity_id: sensor.grow_hydro01_luftfeuchtigkeit_korrigiert
+      above: 77
+      for:
+        minutes: 1
+  action:
+    - service: switch.turn_on
+      target:
+        entity_id: switch.grow_abluft01
+    - service: persistent_notification.create
+      data:
+        title: Growbox
+        message: Abluft EIN (LF > 77%)
+  mode: single
+
+- id: grow_abluft_aus
+  alias: 'ABLUFT: AUS (<64% LF)'
+  trigger:
+    - platform: numeric_state
+      entity_id: sensor.grow_hydro01_luftfeuchtigkeit_korrigiert
+      below: 64
+      for:
+        minutes: 1
+  action:
+    - service: switch.turn_off
+      target:
+        entity_id: switch.grow_abluft01
+    - service: persistent_notification.create
+      data:
+        title: Growbox
+        message: Abluft AUS (LF < 64%)
+  mode: single
+
+- id: grow_heizung_sicherheit
+  alias: 'HEIZUNG: Sicherheitsabschaltung (>28°C)'
+  trigger:
+    - platform: numeric_state
+      entity_id: sensor.grow_hydro01_temperatur
+      above: 28
+      for:
+        seconds: 40
+  action:
+    - service: switch.turn_off
+      target:
+        entity_id: switch.grow_heizung01
+    - service: persistent_notification.create
+      data:
+        title: Growbox
+        message: 'ACHTUNG: Heizung AUS (Sicherheit > 28°C)'
+  mode: single
+
+- id: heizung_notabschaltung_erweitert
+  alias: 'HEIZUNG: Notabschaltung (Temperatur > 29°C & Laufzeit > 2min)'
+  trigger:
+    - platform: numeric_state
+      entity_id: sensor.grow_hydro01_temperatur
+      above: 29
+      for:
+        minutes: 2
+  condition:
+    - condition: state
+      entity_id: switch.grow_heizung01
+      state: 'on'
+  action:
+    - service: switch.turn_off
+      target:
+        entity_id: switch.grow_heizung01
+    - service: fan.turn_on  # Hier "fan.turn_on" anstatt "switch.turn_on"
+      target:
+        entity_id: fan.growbox_ventilator  # Ersetze das hier mit dem richtigen Namen deines Ventilators
+    - service: persistent_notification.create
+      data:
+        title: Growbox - NOTFALL
+        message: Heizung wurde NOTABGESCHALTET! Temperatur > 29°C und lief länger als 2 Minuten.
+  mode: single
+
+- id: grow_licht_an
+  alias: 'LICHT: EIN (08:00)'
+  trigger:
+    - platform: time
+      at: '08:00:00'
+  action:
+    - service: switch.turn_on
+      target:
+        entity_id:
+          - switch.grow_licht01_sp1
+          - switch.grow_licht02_vipra_sp5
+    - service: persistent_notification.create
+      data:
+        title: Growbox
+        message: Licht EIN (08:00)
+  mode: single
+
+- id: grow_licht_aus
+  alias: 'LICHT: AUS (03:00)'
+  trigger:
+    - platform: time
+      at: '03:00:00'
+  action:
+    - service: switch.turn_off
+      target:
+        entity_id:
+          - switch.grow_licht01_sp1
+          - switch.grow_licht02_vipra_sp5
+    - service: persistent_notification.create
+      data:
+        title: Growbox
+        message: Licht AUS (03:00)
+  mode: single
