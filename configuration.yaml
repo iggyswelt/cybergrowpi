@@ -1,0 +1,35 @@
+default_config:
+
+recorder:
+  db_url: "mysql://homeassistant:DEIN-PASSWORT@core-mariadb/homeassistant?charset=utf8mb4"
+
+template:
+  - sensor:
+      - name: "Grow Hydro01 Temperatur Korrigiert"
+        unique_id: grow_hydro01_temperatur_korrigiert
+        unit_of_measurement: "°C"
+        device_class: temperature
+        state: >
+          {% if is_number(states('sensor.grow_hydro01_temperatur')) %}
+            {{ (states('sensor.grow_hydro01_temperatur') | float(0) - 1.0) | round(1) }}
+          {% else %}
+            0
+          {% endif %}
+      - name: "Grow Hydro01 Luftfeuchtigkeit Korrigiert"
+        unique_id: grow_hydro01_luftfeuchtigkeit_korrigiert
+        unit_of_measurement: "%"
+        device_class: humidity
+        state: >
+          {% if is_number(states('sensor.grow_hydro01_luftfeuchtigkeit')) %}
+            {{ (states('sensor.grow_hydro01_luftfeuchtigkeit') | float(0) * 0.96) | round(1) }}
+          {% else %}
+            0
+          {% endif %}
+
+logger:
+  default: warning
+  logs:
+    homeassistant.components.automation: debug  # Debug für Automatisierungen
+    homeassistant.components.template: info
+
+automation: !include automations.yaml
