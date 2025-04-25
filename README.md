@@ -1,5 +1,3 @@
-Hier ist das **komplette GitHub README.md** für dein CyberGrowPi-Projekt, kombiniert mit den besten Teilen unserer Scripts:
-
 ```markdown
 # 🌿 CyberGrowPi - Automatisierte Growbox mit Raspberry Pi
 
